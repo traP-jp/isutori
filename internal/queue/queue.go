@@ -56,7 +56,7 @@ func (q *Queue) Enqueue(ctx context.Context, t Ticket) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	suffix := unsafeName.ReplaceAllString(t.Requester, "_") + "-" + unsafeName.ReplaceAllString(t.ID, "_") + ".json"
+	suffix := unsafeName.ReplaceAllString(t.Requester, "_") + "-" + t.ID + ".json"
 	script := q.prelude() + fmt.Sprintf(`n="$(date +%%s%%N)-"%s
 cat > "$Q/.$n.tmp"
 mv "$Q/.$n.tmp" "$Q/$n"

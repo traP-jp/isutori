@@ -30,7 +30,7 @@ const usage = `usage:
   isutori status [--json]
   isutori queue clear
   isutori init
-  isutori userscript [--match PATTERN]...
+  isutori userscript [MATCH_PATTERN...]
   isutori mock-portal [--listen ADDR] [--pending D] [--running D] [--outcome pass|fail|error] [--score N]
 
 exit codes of bench: 0 benchmark passed, 1 error, 2 benchmark failed
@@ -231,20 +231,11 @@ func initRepo(ctx context.Context) error {
 	return os.WriteFile(ignore, append(b, "/.isutori/\n"...), 0o644)
 }
 
-type stringList []string
-
-func (l *stringList) String() string     { return strings.Join(*l, ",") }
-func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }
-
-func printUserscript(args []string) error {
-	fs := flag.NewFlagSet("userscript", flag.ContinueOnError)
-	var match stringList
-	fs.Var(&match, "match", "@match pattern of the portal, e.g. https://portal.example.com/* (repeatable; default: the mock portal)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
+// printUserscript takes @match patterns of the portal; without any, it
+// targets the mock portal.
+func printUserscript(match []string) error {
 	if len(match) == 0 {
-		match = stringList{"http://127.0.0.1:7879/*"}
+		match = []string{"http://127.0.0.1:7879/*"}
 	}
 	s, err := userscript.Render(match)
 	if err != nil {

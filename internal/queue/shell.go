@@ -42,21 +42,10 @@ func run(cmd *exec.Cmd, stdin io.Reader) ([]byte, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, &ShellError{Err: err, Stderr: strings.TrimSpace(stderr.String())}
+		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.Bytes(), nil
 }
-
-type ShellError struct {
-	Err    error
-	Stderr string
-}
-
-func (e *ShellError) Error() string {
-	return fmt.Sprintf("%v: %s", e.Err, e.Stderr)
-}
-
-func (e *ShellError) Unwrap() error { return e.Err }
 
 func Quote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"

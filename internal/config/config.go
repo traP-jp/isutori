@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -91,7 +92,7 @@ func (c *Config) validate() error {
 		errs = append(errs, fmt.Sprintf("bench.method must be %q or %q, got %q", MethodUserscript, MethodManual, c.Bench.Method))
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "; "))
+		return errors.New(strings.Join(errs, "; "))
 	}
 	return nil
 }

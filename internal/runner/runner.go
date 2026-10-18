@@ -398,24 +398,14 @@ func linkSelf(runDir string) (string, error) {
 }
 
 func extract(ctx context.Context, root, commit, dest string) error {
-	archive := exec.CommandContext(ctx, "git", "-C", root, "archive", "--format=tar", commit)
-	untar := exec.CommandContext(ctx, "tar", "-x", "-C", dest)
-	pipe, err := archive.StdoutPipe()
-	if err != nil {
+	tarball := dest + ".tar"
+	if _, err := git(ctx, root, "archive", "-o", tarball, commit); err != nil {
 		return err
 	}
-	untar.Stdin = pipe
-	if err := archive.Start(); err != nil {
-		return err
-	}
-	if out, err := untar.CombinedOutput(); err != nil {
-		archive.Wait()
+	if out, err := exec.CommandContext(ctx, "tar", "-xf", tarball, "-C", dest).CombinedOutput(); err != nil {
 		return fmt.Errorf("extract %s: %w: %s", commit, err, out)
 	}
-	if err := archive.Wait(); err != nil {
-		return fmt.Errorf("git archive %s: %w", commit, err)
-	}
-	return nil
+	return os.Remove(tarball)
 }
 
 func git(ctx context.Context, dir string, args ...string) (string, error) {

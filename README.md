@@ -21,7 +21,7 @@ go run github.com/traP-jp/isutori@latest status --json
 | `status [--json]` | キューの中身と、最後にデプロイされたもの |
 | `queue clear` | キューを空にする。止まったチケットの強制解除用 |
 | `init` | `isutori.toml` の雛形を書く |
-| `userscript [--match PATTERN]...` | ユーザースクリプトを stdout に出す (下記) |
+| `userscript [MATCH_PATTERN...]` | ユーザースクリプトを stdout に出す (下記) |
 | `mock-portal [--outcome pass\|fail\|error] ...` | 偽ポータルを起動する (下記) |
 
 `bench` は進行状況を stderr に、実行の要約 JSON を stdout に出します。終了コードは、ベンチが pass なら 0、途中でエラーなら 1、ベンチが fail なら 2 です。AI に使わせるときは、バックグラウンドで起動して待ち時間に別の作業をさせてください。
@@ -71,7 +71,7 @@ go run github.com/traP-jp/isutori@latest status --json
 
 ### ユーザースクリプト
 
-`isutori userscript --match 'https://portal.example.com/*' > isutori.user.js` で書き出し、Tampermonkey に入れます。中身は 2 つに分かれています。
+`isutori userscript 'https://portal.example.com/*' > isutori.user.js` で書き出し、Tampermonkey に入れます。中身は 2 つに分かれています。
 
 - 先頭の `adapter`: ポータルの画面に依存する部分。当日のポータルに合わせて書き換えます。同梱の実装は ISUCON14 のポータル (偽ポータル) 向けの例です
   - `enqueue()`: ジョブを 1 つ始め、それを指す値を返す。ポータルに断られたら例外を投げる
