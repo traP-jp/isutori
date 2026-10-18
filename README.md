@@ -112,3 +112,7 @@ pnpm build       # 画面をビルドして dist/ を更新する
 pnpm typecheck   # 画面、スクリプト、ユーザースクリプトの型検査
 pnpm test        # 偽ポータルに対してユーザースクリプトを動かす
 ```
+
+## ライセンス
+
+MIT License です。偽ポータルの画面に同梱している第三者のコードのライセンスは、`internal/mockportal/dist/THIRD_PARTY_LICENSES` にあります。

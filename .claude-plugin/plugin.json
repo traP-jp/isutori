@@ -2,7 +2,7 @@
   "name": "isutori",
   "description": "Set up isutori, the deploy-and-benchmark queue for ISUCON teams, in a contest repository",
   "author": {
-    "name": "traP"
+    "name": "traP Community"
   },
   "repository": "https://github.com/traP-jp/isutori"
 }

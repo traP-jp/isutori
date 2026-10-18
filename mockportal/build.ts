@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import * as esbuild from "esbuild";
 import * as sass from "sass";
 
@@ -16,14 +16,15 @@ git("checkout", "--quiet", commit);
 if (process.argv.includes("--fetch-only")) process.exit(0);
 
 mkdirSync(dist, { recursive: true });
-await esbuild.build({
+const bundle = await esbuild.build({
   entryPoints: ["src/main.tsx"],
   bundle: true,
   minify: true,
   target: "es2022",
   outfile: `${dist}/app.js`,
   define: { "process.env.NODE_ENV": '"production"' },
-  banner: { js: `/*! Built from isucon/isucon14-portal@${commit}, MIT License, Copyright (c) 2022 ISUCON. See LICENSE.isucon14-portal. */` },
+  banner: { js: `/*! Built from isucon/isucon14-portal@${commit} and npm packages; see THIRD_PARTY_LICENSES. */` },
+  metafile: true,
 });
 const css = sass.compile(`${cache}/portal/app/javascript/packs/application.scss`, {
   loadPaths: ["node_modules"],
@@ -32,4 +33,16 @@ const css = sass.compile(`${cache}/portal/app/javascript/packs/application.scss`
   silenceDeprecations: ["import", "global-builtin", "color-functions", "slash-div", "if-function"],
 });
 writeFileSync(`${dist}/app.css`, css.css);
-copyFileSync(`${cache}/LICENSE`, `${dist}/LICENSE.isucon14-portal`);
+
+const bundledFiles = [...Object.keys(bundle.metafile.inputs), ...css.loadedUrls].map((f) => realpathSync(f));
+const packageRoots = new Set(bundledFiles.flatMap((f) => f.match(/^(.*\/node_modules\/(?:@[^/]+\/)?[^/]+)\//)?.[1] ?? []));
+const notices = [...packageRoots].map((root) => {
+  const pkg = JSON.parse(readFileSync(`${root}/package.json`, "utf8"));
+  const shipped = readdirSync(root).find((f) => /^(licen[cs]e|copying)(\.|$)/i.test(f));
+  const licensePath = shipped ? `${root}/${shipped}` : `licenses/${pkg.name}.txt`;
+  if (!existsSync(licensePath)) throw new Error(`${pkg.name} ships no license file; add one at ${licensePath}`);
+  return `${pkg.name}@${pkg.version}\nLicense: ${pkg.license}\n\n${readFileSync(licensePath, "utf8").trim()}`;
+});
+notices.sort();
+notices.unshift(`isucon/isucon14-portal@${commit}\nLicense: MIT\n\n${readFileSync(`${cache}/LICENSE`, "utf8").trim()}`);
+writeFileSync(`${dist}/THIRD_PARTY_LICENSES`, notices.join("\n\n----------------------------------------\n\n") + "\n");
