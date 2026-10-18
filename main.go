@@ -231,8 +231,6 @@ func initRepo(ctx context.Context) error {
 	return os.WriteFile(ignore, append(b, "/.isutori/\n"...), 0o644)
 }
 
-// printUserscript takes @match patterns of the portal; without any, it
-// targets the mock portal.
 func printUserscript(match []string) error {
 	if len(match) == 0 {
 		match = []string{"http://127.0.0.1:7879/*"}

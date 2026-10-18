@@ -25,7 +25,7 @@ func (s SSH) Run(ctx context.Context, script string, stdin io.Reader) ([]byte, e
 	return run(exec.CommandContext(ctx, s.Command[0], args...), stdin)
 }
 
-// Local runs scripts on this machine in Dir. Used in tests in place of SSH.
+// Local stands in for SSH in tests.
 type Local struct {
 	Dir string
 }

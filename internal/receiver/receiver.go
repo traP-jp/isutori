@@ -17,8 +17,7 @@ type Result struct {
 	Passed  bool   `json:"passed"`
 	Score   int64  `json:"score"`
 	Message string `json:"message"`
-	// Error is set when the userscript could not obtain a result, e.g. its
-	// portal adapter no longer matches the page.
+	// Set when no result could be obtained, as opposed to a failed benchmark.
 	Error      string    `json:"error,omitempty"`
 	ReceivedAt time.Time `json:"received_at"`
 }
