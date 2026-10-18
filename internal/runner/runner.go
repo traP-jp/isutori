@@ -339,8 +339,14 @@ func (r *run) bench(ctx context.Context) error {
 		return err
 	}
 	r.summary.Bench = &res
+	if err := writeJSON(filepath.Join(r.summary.RunDir, "bench.json"), res); err != nil {
+		return err
+	}
+	if res.Error != "" {
+		return fmt.Errorf("userscript: %s", res.Error)
+	}
 	r.log.Printf("bench result: passed=%v score=%d", res.Passed, res.Score)
-	return writeJSON(filepath.Join(r.summary.RunDir, "bench.json"), res)
+	return nil
 }
 
 func (r *run) writeSummary() {

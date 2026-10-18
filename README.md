@@ -21,6 +21,7 @@ go run github.com/traP-jp/isutori@latest status --json
 | `status [--json]` | キューの中身と、最後にデプロイされたもの |
 | `queue clear` | キューを空にする。止まったチケットの強制解除用 |
 | `init` | `isutori.toml` の雛形を書く |
+| `userscript [--match PATTERN]...` | ユーザースクリプトを stdout に出す (下記) |
 | `mock-portal [--outcome pass\|fail\|error] ...` | 偽ポータルを起動する (下記) |
 
 `bench` は進行状況を stderr に、実行の要約 JSON を stdout に出します。終了コードは、ベンチが pass なら 0、途中でエラーなら 1、ベンチが fail なら 2 です。AI に使わせるときは、バックグラウンドで起動して待ち時間に別の作業をさせてください。
@@ -64,9 +65,21 @@ go run github.com/traP-jp/isutori@latest status --json
 ベンチの段階では、`bench.listen` (既定 `127.0.0.1:7878`) で受信サーバーが立ちます。
 
 - `manual`: `http://127.0.0.1:7878/` を開き、ポータルの結果をフォームに貼り付けて送信します
-- `userscript`: `portal_url#autobench=<run_id>&receiver=<URL>` をブラウザで開きます。ユーザースクリプトが Enqueue を押し、結果を `POST /api/result` に送ります (ユーザースクリプトの骨格は未実装)
+- `userscript`: `portal_url#autobench=<run_id>&receiver=<URL>` をブラウザで開きます (`bench.open_command`、既定は `wslview` / `xdg-open` / `open` のうち見つかったもの)。ユーザースクリプトが Enqueue を押し、結果を `POST /api/result` に送ります
 
-`POST /api/result` は `Content-Type: application/json` で、`{"run_id", "passed", "score", "message"}` を受け取ります。
+`POST /api/result` は `Content-Type: application/json` で、`{"run_id", "passed", "score", "message"}` を受け取ります。結果を得られなかったときは `{"run_id", "error"}` を送ります。このときは bench の段階がエラーになり、`isutori bench` は 1 で終了します。
+
+### ユーザースクリプト
+
+`isutori userscript --match 'https://portal.example.com/*' > isutori.user.js` で書き出し、Tampermonkey に入れます。中身は 2 つに分かれています。
+
+- 先頭の `adapter`: ポータルの画面に依存する部分。当日のポータルに合わせて書き換えます。同梱の実装は ISUCON14 のポータル (偽ポータル) 向けの例です
+  - `enqueue()`: ジョブを 1 つ始め、それを指す値を返す。ポータルに断られたら例外を投げる
+  - `currentJob()`: いま表示しているジョブを指す値を返す。Enqueue でページが再読み込みされたときの再開に使う
+  - `readResult(job)`: 実行中なら `null`、終わったら `{passed, score, message}` を返す
+- それ以外: URL の印の検出、状態の保存 (sessionStorage)、結果の送信、タイムアウト。ポータルに依存しません
+
+Tampermonkey のメニューの「isutori: read this page」は、いま表示しているジョブを `readResult(null)` で読んで表示します。ベンチを消費せずに `adapter` を確かめられます。当日書き換えた版は競技リポジトリに保存し、全員で同じものを使ってください。
 
 ## 偽ポータル
 
@@ -76,7 +89,7 @@ go run github.com/traP-jp/isutori@latest status --json
 - 実行中に Enqueue すると、本物と同じく 422 で拒否されます
 - 初回は対象サーバーが未選択で、そのまま Enqueue すると 404 になります。これも本物と同じです
 
-画面のビルド成果物は `internal/mockportal/dist/` にコミットしてあるので、使うだけなら Node は不要です。画面を変えるときは `mockportal/` で `pnpm install && pnpm build` し、`pnpm test` で確かめます。
+画面のビルド成果物は `internal/mockportal/dist/` にコミットしてあるので、使うだけなら Node は不要です。画面を変えるときは `mockportal/` で `pnpm install && pnpm build` します。`pnpm test` は、偽ポータルに対してユーザースクリプトを動かし、送られる結果を確かめます (初回は `pnpm exec playwright install chromium` が必要です)。
 
 ## 開発
 

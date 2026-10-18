@@ -1,0 +1,132 @@
+// Runs the userscript (with its example adapter) against `isutori mock-portal`
+// and checks what it reports to a stand-in for the isutori receiver.
+import assert from "node:assert/strict";
+import { execFileSync, spawn } from "node:child_process";
+import { createServer } from "node:http";
+import { chromium } from "playwright";
+
+execFileSync("go", ["build", "-o", ".cache/isutori", ".."], { stdio: "inherit" });
+const userscript = execFileSync(".cache/isutori", ["userscript"], { encoding: "utf8" });
+
+const portals = [];
+function startPortal(port, outcome) {
+  portals.push(
+    spawn(".cache/isutori", ["mock-portal", "--listen", `127.0.0.1:${port}`, "--pending", "1s", "--running", "2s", "--outcome", outcome], {
+      stdio: "ignore",
+    }),
+  );
+  return `http://127.0.0.1:${port}`;
+}
+
+const posted = new Map();
+const receiver = createServer((req, res) => {
+  let body = "";
+  req.on("data", (c) => (body += c));
+  req.on("end", () => {
+    const result = JSON.parse(body);
+    posted.get(result.run_id)?.(result);
+    res.writeHead(204).end();
+  });
+}).listen(17880, "127.0.0.1");
+const receiverURL = "http://127.0.0.1:17880";
+
+function waitForResult(runId, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`no result for ${runId}`)), timeoutMs);
+    posted.set(runId, (r) => {
+      clearTimeout(timer);
+      resolve(r);
+    });
+  });
+}
+
+async function newPage(browser) {
+  const context = await browser.newContext();
+  await context.exposeBinding("__gmXhr", async (_source, d) => {
+    try {
+      const res = await fetch(d.url, { method: d.method, headers: d.headers, body: d.data });
+      return { status: res.status, responseText: await res.text() };
+    } catch {
+      return null;
+    }
+  });
+  await context.addInitScript(`
+    window.GM_registerMenuCommand = () => {};
+    window.GM_xmlhttpRequest = (d) => window.__gmXhr({ url: d.url, method: d.method, headers: d.headers, data: d.data })
+      .then((r) => (r ? d.onload(r) : d.onerror()));
+    document.addEventListener("DOMContentLoaded", () => { ${userscript} });
+  `);
+  const page = await context.newPage();
+  page.on("pageerror", (e) => {
+    throw e;
+  });
+  return page;
+}
+
+const pass = startPortal(17881, "pass");
+const fail = startPortal(17882, "fail");
+const error = startPortal(17883, "error");
+await new Promise((r) => setTimeout(r, 1000));
+const browser = await chromium.launch();
+try {
+  {
+    const page = await newPage(browser);
+    const result = waitForResult("pass");
+    await page.goto(`${pass}/contestant#autobench=pass&receiver=${receiverURL}`);
+    const r = await result;
+    assert.equal(r.passed, true);
+    assert.equal(r.score, 12345);
+    assert.match(r.message, /score=12345/);
+    assert.equal(r.error, undefined);
+
+    // A second run in the same tab enqueues a new job instead of resuming.
+    const again = waitForResult("pass-again");
+    await page.goto(`${pass}/contestant#autobench=pass-again&receiver=${receiverURL}`);
+    assert.equal((await again).passed, true);
+    assert.match(page.url(), /benchmark_jobs\/2$/);
+  }
+  {
+    const page = await newPage(browser);
+    const result = waitForResult("fail");
+    await page.goto(`${fail}/contestant#autobench=fail&receiver=${receiverURL}`);
+    const r = await result;
+    assert.equal(r.passed, false);
+    assert.equal(r.score, 0);
+    assert.match(r.message, /mock portal was configured to fail/);
+  }
+  {
+    const page = await newPage(browser);
+    const result = waitForResult("errored");
+    await page.goto(`${error}/contestant#autobench=errored&receiver=${receiverURL}`);
+    const r = await result;
+    assert.equal(r.passed, false);
+    assert.match(r.message, /^ERRORED/);
+  }
+  {
+    // Reloading the job page while waiting resumes instead of enqueuing again.
+    const page = await newPage(browser);
+    const result = waitForResult("reload");
+    await page.goto(`${pass}/contestant#autobench=reload&receiver=${receiverURL}`);
+    await page.waitForURL(/benchmark_jobs\/\d+$/);
+    await page.reload();
+    assert.equal((await result).passed, true);
+    assert.match(page.url(), /benchmark_jobs\/1$/);
+  }
+  {
+    // A job started by hand makes the portal refuse; this must surface as an error.
+    const page = await newPage(browser);
+    await page.goto(`${pass}/contestant`);
+    await page.locator("select").selectOption("1");
+    await page.getByRole("button", { name: "Enqueue" }).click();
+    await page.waitForURL(/benchmark_jobs\/\d+$/);
+    const result = waitForResult("busy");
+    await page.goto(`${pass}/contestant#autobench=busy&receiver=${receiverURL}`);
+    const r = await result;
+    assert.match(r.error, /^enqueue: portal refused to enqueue: .*no other concurrent job/);
+  }
+  console.log("userscript: OK");
+} finally {
+  await browser.close();
+  receiver.close();
+  portals.forEach((p) => p.kill());
+}

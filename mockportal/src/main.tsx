@@ -102,7 +102,13 @@ function toProto(j: StoredJob, now: number): BenchmarkJob {
   job.startedAt = timestampFromMs(startedMs);
   if (now < finishedMs) {
     job.status = BenchmarkJob_Status.RUNNING;
-    job.result = { $typeName: "isuxportal.proto.resources.BenchmarkResult", finished: false, passed: false, score: 0n };
+    job.result = {
+      $typeName: "isuxportal.proto.resources.BenchmarkResult",
+      finished: false,
+      passed: false,
+      score: 0n,
+      markedAt: timestampFromMs(now),
+    };
     return job;
   }
   job.finishedAt = timestampFromMs(finishedMs);

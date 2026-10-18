@@ -4,7 +4,7 @@
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "node build.mjs --fetch-only && tsc --noEmit",
-    "test": "node test/smoke.mjs"
+    "test": "node test/userscript.mjs"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.0.0",

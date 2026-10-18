@@ -21,6 +21,7 @@ import (
 	"github.com/traP-jp/isutori/internal/mockportal"
 	"github.com/traP-jp/isutori/internal/queue"
 	"github.com/traP-jp/isutori/internal/runner"
+	"github.com/traP-jp/isutori/internal/userscript"
 )
 
 const usage = `usage:
@@ -29,6 +30,7 @@ const usage = `usage:
   isutori status [--json]
   isutori queue clear
   isutori init
+  isutori userscript [--match PATTERN]...
   isutori mock-portal [--listen ADDR] [--pending D] [--running D] [--outcome pass|fail|error] [--score N]
 
 exit codes of bench: 0 benchmark passed, 1 error, 2 benchmark failed
@@ -65,6 +67,8 @@ func dispatch(ctx context.Context, args []string) (int, error) {
 		return exitCode(clearQueue(ctx))
 	case "init":
 		return exitCode(initRepo(ctx))
+	case "userscript":
+		return exitCode(printUserscript(rest))
 	case "mock-portal":
 		return exitCode(mockPortal(ctx, rest))
 	default:
@@ -225,6 +229,29 @@ func initRepo(ctx context.Context) error {
 		b = append(b, '\n')
 	}
 	return os.WriteFile(ignore, append(b, "/.isutori/\n"...), 0o644)
+}
+
+type stringList []string
+
+func (l *stringList) String() string     { return strings.Join(*l, ",") }
+func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }
+
+func printUserscript(args []string) error {
+	fs := flag.NewFlagSet("userscript", flag.ContinueOnError)
+	var match stringList
+	fs.Var(&match, "match", "@match pattern of the portal, e.g. https://portal.example.com/* (repeatable; default: the mock portal)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if len(match) == 0 {
+		match = stringList{"http://127.0.0.1:7879/*"}
+	}
+	s, err := userscript.Render(match)
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.WriteString(s)
+	return err
 }
 
 func mockPortal(ctx context.Context, args []string) error {

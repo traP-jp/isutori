@@ -13,10 +13,13 @@ import (
 )
 
 type Result struct {
-	RunID      string    `json:"run_id"`
-	Passed     bool      `json:"passed"`
-	Score      int64     `json:"score"`
-	Message    string    `json:"message"`
+	RunID   string `json:"run_id"`
+	Passed  bool   `json:"passed"`
+	Score   int64  `json:"score"`
+	Message string `json:"message"`
+	// Error is set when the userscript could not obtain a result, e.g. its
+	// portal adapter no longer matches the page.
+	Error      string    `json:"error,omitempty"`
 	ReceivedAt time.Time `json:"received_at"`
 }
 
