@@ -1,13 +1,13 @@
 ---
 name: setup
-description: ISUCON の競技リポジトリに isutori (デプロイとベンチ実行のキュー) を組み込む。isutori.toml の作成、既存のデプロイ手段や集計スクリプトの段階コマンドへの結び付け、ユーザースクリプトのポータル対応、AI 向けの運用ルールの追記、最初のベンチでの確認までを行う。
+description: ISUCON の競技リポジトリに isutori (デプロイとベンチ実行のキュー) を組み込む。isutori.toml の作成、既存のデプロイ手段や集計スクリプトの段階コマンドへの結び付け、ユーザースクリプトのポータル対応、エージェント向けの運用ルールの追記、最初のベンチでの確認までを行う。
 disable-model-invocation: true
 argument-hint: "[portal-url]"
 ---
 
 # isutori を競技リポジトリに組み込む
 
-isutori の仕様 (コマンド、測定の流れ、段階コマンドとの約束事、環境変数、終了コード) は `${CLAUDE_PLUGIN_ROOT}/README.md` にある。作業の前に読むこと。
+isutori の仕様 (コマンド、測定の流れ、段階コマンドとの約束事、環境変数、終了コード) は、この SKILL.md から見て `../../README.md` にある。作業の前に読むこと。
 
 isutori が持つのはキューと、測定枠の中の進行だけである。デプロイ手段 (ansible、Makefile、シェルなど) や集計スクリプトの中身は作らない。段階に結び付けるものが競技リポジトリに無ければ、作業を止めて利用者に伝える。
 
@@ -48,19 +48,19 @@ mise が使えない場合は、`go run github.com/traP-jp/isutori@<コミット
 `bench.method = "userscript"` のときに行う。
 
 1. 利用者に、当日マニュアルとポータルの注意書きに、ポータルの自動操作を禁じる記述が無いか確かめてもらう。禁じられていれば `manual` にして、この節を飛ばす
-2. `isutori userscript '<ポータルの URL>/*' > ops/isutori.user.js` で書き出す。引数で URL が渡されていればそれを使う ($ARGUMENTS)
+2. `isutori userscript '<ポータルの URL>/*' > ops/isutori.user.js` で書き出す。ポータルの URL は、利用者の依頼に含まれていればそれを使い、無ければ尋ねる
 3. 利用者に、ポータルのダッシュボードと、終わったジョブの詳細ページの HTML を保存して渡してもらう。ポータルにはログインが要るので、自分では取りに行かない
 4. HTML を読み、スクリプト先頭の `adapter` だけを書き換える。約束事はスクリプト内の JSDoc にある。型注釈は消さない
 5. 利用者に Tampermonkey へ入れてもらい、終わったジョブのページでメニューの「isutori: read this page」を実行してもらう。表示された結果がポータルの表示と合うまで `adapter` を直す
 6. WSL から使う場合は、Windows のブラウザから `http://127.0.0.1:7878/` に届くことも確かめてもらう (ベンチの段階でしか待ち受けないので、確かめるのは手順 7 の最初のベンチのとき)
 
-## 5. AI 向けの運用ルールを追記する
+## 5. エージェント向けの運用ルールを追記する
 
-競技リポジトリの `CLAUDE.md` に、[claude-md.md](claude-md.md) の内容を追記する。既に同じ節があれば重複させない。
+チームの Claude Code と Codex の両方に届くよう、競技リポジトリの `AGENTS.md` に [agent-rules.md](agent-rules.md) の内容を追記する。`CLAUDE.md` には `@AGENTS.md` の行を入れて読み込ませる。既に同じ内容があれば重複させない。
 
 ## 6. 反映する
 
-`isutori.toml`、段階コマンド、`ops/isutori.user.js`、`CLAUDE.md` の変更をコミットし、利用者の承認を得て `ops.ref` のブランチ (既定は main) へ push する。
+`isutori.toml`、段階コマンド、`ops/isutori.user.js`、`AGENTS.md`、`CLAUDE.md` の変更をコミットし、利用者の承認を得て `ops.ref` のブランチ (既定は main) へ push する。
 
 ## 7. 確かめる
 
