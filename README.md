@@ -18,7 +18,7 @@ go run github.com/traP-jp/isutori@latest status --json
 |---|---|
 | `bench [--ref REF] [--mode measure\|final] [--requester NAME]` | REF (既定 `HEAD`、origin に push 済みであること) をキューに並べ、先頭になったら段階コマンドを順に実行する |
 | `guard` | 自分のチケットがキューの先頭でなければ 0 以外で終了する。デプロイ手段の冒頭で呼ぶ |
-| `status [--json]` | キューの中身と、最後にデプロイされたもの |
+| `status [--json]` | キューの中身と、最後にデプロイされたものを表示する |
 | `queue clear` | キューを空にする。止まったチケットの強制解除用 |
 | `init` | `isutori.toml` の雛形を書く |
 | `userscript [MATCH_PATTERN...]` | ユーザースクリプトを stdout に出す (下記) |
@@ -30,7 +30,7 @@ go run github.com/traP-jp/isutori@latest status --json
 
 1. 指定 REF が origin にあることを確かめ、`ops.ref` (既定 `origin/main`) の中身を `.isutori/runs/<run_id>/ops/` に取り出す。以後、`isutori.toml` と段階コマンドはここのものを使う
 2. キューにチケットを置き、先頭になるまで待つ。待っている間もリースを延長し続ける
-3. `deploy` → `health` → (`deployed.json` を記録) → `prepare` → ベンチ → `collect` → `analyze` → `publish`
+3. `deploy` → `health` → (`deployed.json` を記録) → `prepare` → ベンチ → `collect` → `analyze` → `publish` の順に進む
 4. `cleanup`。`deploy` に進んだ回は、途中で失敗しても Ctrl-C で止めても必ず呼ぶ
 5. チケットを消す
 
@@ -40,7 +40,7 @@ go run github.com/traP-jp/isutori@latest status --json
 
 段階コマンドは `isutori.toml` の `[hooks]` に書き、`ops/` を作業ディレクトリとして `sh -c` で実行します。0 以外で終了すると、残りを飛ばして `cleanup` へ進みます。未設定の段階は飛ばします (`deploy` だけは必須)。
 
-渡す環境変数:
+段階コマンドには次の環境変数を渡します。
 
 | 変数 | 内容 |
 |---|---|
@@ -65,7 +65,7 @@ go run github.com/traP-jp/isutori@latest status --json
 ベンチの段階では、`bench.listen` (既定 `127.0.0.1:7878`) で受信サーバーが立ちます。
 
 - `manual`: `http://127.0.0.1:7878/` を開き、ポータルの結果をフォームに貼り付けて送信します
-- `userscript`: `portal_url#autobench=<run_id>&receiver=<URL>` をブラウザで開きます (`bench.open_command`、既定は `wslview` / `xdg-open` / `open` のうち見つかったもの)。ユーザースクリプトが Enqueue を押し、結果を `POST /api/result` に送ります
+- `userscript`: `portal_url#autobench=<run_id>&receiver=<URL>` をブラウザで開きます。開くコマンドは `bench.open_command` で指定でき、未指定なら `wslview`、`xdg-open`、`open` の順に探して最初に見つかったものを使います。開いたページではユーザースクリプトが Enqueue を押し、結果を `POST /api/result` に送ります
 
 `POST /api/result` は `Content-Type: application/json` で、`{"run_id", "passed", "score", "message"}` を受け取ります。結果を得られなかったときは `{"run_id", "error"}` を送ります。このときは bench の段階がエラーになり、`isutori bench` は 1 で終了します。
 
