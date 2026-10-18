@@ -79,12 +79,17 @@ go run github.com/traP-jp/isutori@latest status --json
 - ジョブは `--pending` と `--running` の時間をかけて進み、`--outcome` (`pass` / `fail` / `error`) の結果で終わります
 - 本物と同じく、実行中に Enqueue すると 422 で断られ、対象サーバーを選ばずに Enqueue すると 404 になります
 
-## Claude Code での組み込み
+## エージェントでの組み込み
 
-競技リポジトリで Claude Code の plugin を入れ、`/isutori:setup` を実行すると、Claude が isutori を組み込みます。ポータルの URL を引数に渡せます。
+競技リポジトリで plugin を入れて setup の skill を実行すると、エージェントが isutori を組み込みます。ポータルの URL を一緒に伝えてください。
 
 ```sh
+# Claude Code: /isutori:setup で実行する
 claude plugin install isutori --marketplace traP-jp/isutori
+
+# Codex: $ から isutori:setup を選んで実行する
+codex plugin marketplace add traP-jp/isutori
+codex plugin add isutori@isutori
 ```
 
 ## 開発
@@ -94,6 +99,8 @@ mise install
 go test ./...
 testenv/e2e.sh   # Docker の sshd を s1 に見立て、3 人同時の bench で排他と後始末を確かめる
 ```
+
+skill を変えたら `plugin.json` の `version` を上げます。Codex はこの版ごとに plugin をキャッシュします。
 
 偽ポータルの画面は `mockportal/` でビルドし、成果物を `internal/mockportal/dist/` にコミットしています。isutori を使うだけなら Node は不要です。
 
