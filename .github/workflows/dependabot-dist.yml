@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
-      actions: write
+      actions: read
     env:
       GH_TOKEN: ${{ github.token }}
       RUN_ID: ${{ github.event.workflow_run.id }}
@@ -45,5 +45,3 @@ jobs:
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
             commit -m 'Rebuild the mock portal bundle'
           git push origin "HEAD:$BRANCH"
-          # Pushes made with GITHUB_TOKEN do not trigger workflows, so start CI explicitly.
-          gh workflow run ci.yml --ref "$BRANCH"
