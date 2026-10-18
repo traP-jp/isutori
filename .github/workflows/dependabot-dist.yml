@@ -1,0 +1,49 @@
+name: Dependabot dist
+
+# Commits the mock portal bundle that CI rebuilt for a Dependabot pull request.
+# CI builds it without write access; this job has write access but never runs
+# code from the pull request.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  commit:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/npm_and_yarn/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      BRANCH: ${{ github.event.workflow_run.head_branch }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+      - run: |
+          gh run download "$RUN_ID" -n mockportal-dist -D "$RUNNER_TEMP/dist" || { echo "no rebuilt dist"; exit 0; }
+          # A newer push gets its own CI run and artifact.
+          [ "$(git rev-parse HEAD)" = "$HEAD_SHA" ] || { echo "branch moved past $HEAD_SHA; skipping"; exit 0; }
+          if find "$RUNNER_TEMP/dist" ! -type f ! -type d | grep -q .; then
+            echo "artifact contains something other than regular files" >&2
+            exit 1
+          fi
+          rm -rf internal/mockportal/dist
+          cp -r "$RUNNER_TEMP/dist" internal/mockportal/dist
+          git add internal/mockportal/dist
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m 'Rebuild the mock portal bundle'
+          git push origin "HEAD:$BRANCH"
+          # Pushes made with GITHUB_TOKEN do not trigger workflows, so start CI explicitly.
+          gh workflow run ci.yml --ref "$BRANCH"

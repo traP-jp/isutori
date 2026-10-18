@@ -102,7 +102,7 @@ testenv/e2e.sh   # Docker の sshd を s1 に見立て、3 人同時の bench �
 
 skill を変えたら `plugin.json` の `version` を上げます。Codex はこの版ごとに plugin をキャッシュします。
 
-偽ポータルの画面は `mockportal/` でビルドし、成果物を `internal/mockportal/dist/` にコミットしています。isutori を使うだけなら Node は不要です。
+偽ポータルの画面は `mockportal/` でビルドし、成果物を `internal/mockportal/dist/` にコミットしています。isutori を使うだけなら Node は不要です。Dependabot が npm の依存を上げる PR では、CI がビルドし直した成果物を PR に自動でコミットします。
 
 ```sh
 cd mockportal
