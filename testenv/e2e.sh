@@ -33,6 +33,7 @@ export PATH="$work/bin:$PATH"
 git init -q --bare "$work/origin.git"
 git clone -q "$work/origin.git" "$work/repo" 2>/dev/null
 cd "$work/repo"
+git symbolic-ref HEAD refs/heads/main
 git config user.name tester
 git config user.email tester@example.com
 mkdir ops
