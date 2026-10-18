@@ -1,0 +1,9 @@
+{
+  "name": "isutori",
+  "description": "Set up isutori, the deploy-and-benchmark queue for ISUCON teams, in a contest repository",
+  "author": {
+    "name": "traP"
+  },
+  "homepage": "https://github.com/traP-jp/isutori",
+  "repository": "https://github.com/traP-jp/isutori"
+}

@@ -79,6 +79,14 @@ go run github.com/traP-jp/isutori@latest status --json
 - ジョブは `--pending` と `--running` の時間をかけて進み、`--outcome` (`pass` / `fail` / `error`) の結果で終わります
 - 本物と同じく、実行中に Enqueue すると 422 で断られ、対象サーバーを選ばずに Enqueue すると 404 になります
 
+## Claude Code での組み込み
+
+競技リポジトリで Claude Code の plugin を入れ、`/isutori:setup` を実行すると、Claude が isutori を組み込みます。ポータルの URL を引数に渡せます。
+
+```sh
+claude plugin install isutori --marketplace traP-jp/isutori
+```
+
 ## 開発
 
 ```sh

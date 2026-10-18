@@ -1,0 +1,71 @@
+---
+name: setup
+description: ISUCON の競技リポジトリに isutori (デプロイとベンチ実行のキュー) を組み込む。isutori.toml の作成、既存のデプロイ手段や集計スクリプトの段階コマンドへの結び付け、ユーザースクリプトのポータル対応、AI 向けの運用ルールの追記、最初のベンチでの確認までを行う。
+disable-model-invocation: true
+argument-hint: "[portal-url]"
+---
+
+# isutori を競技リポジトリに組み込む
+
+isutori の仕様 (コマンド、測定の流れ、段階コマンドとの約束事、環境変数、終了コード) は `${CLAUDE_PLUGIN_ROOT}/README.md` にある。作業の前に読むこと。
+
+isutori が持つのはキューと、測定枠の中の進行だけである。デプロイ手段 (ansible、Makefile、シェルなど) や集計スクリプトの中身は作らない。段階に結び付けるものが競技リポジトリに無ければ、作業を止めて利用者に伝える。
+
+次の操作は、実行する前に利用者の承認を得る。
+
+- `git push` (段階コマンドと `isutori.toml` は origin の `ops.ref` から読まれるため、反映には push が要る)
+- `isutori bench` (ベンチを 1 回消費する)
+
+## 1. 現状を確かめる
+
+- 競技リポジトリに `origin` があり、push できること
+- `ssh s1 true` のように、各サーバーへ SSH の別名で入れること。キューを置くホスト (通常 s1) の別名を控える
+- 既存のデプロイ手段と集計スクリプトを読み、`deploy` / `health` / `prepare` / `collect` / `analyze` / `publish` / `cleanup` のどれに当たるかを対応づける
+
+## 2. isutori を入れる
+
+チーム全員が同じ版を使うよう、競技リポジトリの mise に版を固定して入れる。
+
+```sh
+mise use --pin go:github.com/traP-jp/isutori@latest
+```
+
+mise が使えない場合は、`go run github.com/traP-jp/isutori@<コミット>` を Makefile などで包み、版を固定する。
+
+## 3. isutori.toml を書く
+
+`isutori init` で雛形を作り、次の点に気をつけて埋める。
+
+- 段階コマンドは、利用者の作業ツリーではなく `ops.ref` から取り出したディレクトリで実行される。デプロイするアプリの版は作業ツリーではなく `$ISUTORI_APP_COMMIT` で受け取り、そのコミットをサーバーへ載せる
+- デプロイ手段そのものの冒頭に `isutori guard` を入れる (playbook の最初のタスク、Makefile のターゲットの 1 行目など)。`hooks.deploy` にだけ書くと、isutori を通さない直接のデプロイを止められない
+- `$ISUTORI_MODE` が `final` のときは、ログ出力やプロファイラを切るようデプロイ手段に渡す
+- `collect` / `analyze` / `publish` の出力は `$ISUTORI_RUN_DIR` の下に置く
+- `cleanup` は、どの段階で失敗した後に呼ばれても動くようにする
+- `bench.method` は、ポータルの URL が分かっていれば `userscript`、分からなければ `manual` にする
+
+## 4. ユーザースクリプトを当日のポータルに合わせる
+
+`bench.method = "userscript"` のときに行う。
+
+1. 利用者に、当日マニュアルとポータルの注意書きに、ポータルの自動操作を禁じる記述が無いか確かめてもらう。禁じられていれば `manual` にして、この節を飛ばす
+2. `isutori userscript '<ポータルの URL>/*' > ops/isutori.user.js` で書き出す。引数で URL が渡されていればそれを使う ($ARGUMENTS)
+3. 利用者に、ポータルのダッシュボードと、終わったジョブの詳細ページの HTML を保存して渡してもらう。ポータルにはログインが要るので、自分では取りに行かない
+4. HTML を読み、スクリプト先頭の `adapter` だけを書き換える。約束事はスクリプト内の JSDoc にある。型注釈は消さない
+5. 利用者に Tampermonkey へ入れてもらい、終わったジョブのページでメニューの「isutori: read this page」を実行してもらう。表示された結果がポータルの表示と合うまで `adapter` を直す
+6. WSL から使う場合は、Windows のブラウザから `http://127.0.0.1:7878/` に届くことも確かめてもらう (ベンチの段階でしか待ち受けないので、確かめるのは手順 7 の最初のベンチのとき)
+
+## 5. AI 向けの運用ルールを追記する
+
+競技リポジトリの `CLAUDE.md` に、[claude-md.md](claude-md.md) の内容を追記する。既に同じ節があれば重複させない。
+
+## 6. 反映する
+
+`isutori.toml`、段階コマンド、`ops/isutori.user.js`、`CLAUDE.md` の変更をコミットし、利用者の承認を得て `ops.ref` のブランチ (既定は main) へ push する。
+
+## 7. 確かめる
+
+1. `isutori status` が通ること (キューのホストに SSH で入れている)
+2. 利用者の承認を得て、`isutori bench` をバックグラウンドで実行する
+3. 終了コードが 0 であること、`$ISUTORI_RUN_DIR` の `run.json` と `bench.json` にスコアが入っていること、`collect` 以降の段階の出力が想定どおりであることを確かめる
+
+失敗したら、`run.log` で失敗した段階を特定して直し、手順 6 からやり直す。

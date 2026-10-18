@@ -1,0 +1,13 @@
+{
+  "name": "isutori",
+  "description": "isutori, the deploy-and-benchmark queue for ISUCON teams",
+  "owner": {
+    "name": "traP"
+  },
+  "plugins": [
+    {
+      "name": "isutori",
+      "source": "./"
+    }
+  ]
+}
