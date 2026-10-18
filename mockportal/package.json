@@ -2,9 +2,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build.mjs",
-    "typecheck": "node build.mjs --fetch-only && tsc --noEmit",
-    "test": "node test/userscript.mjs"
+    "build": "node build.ts",
+    "typecheck": "node build.ts --fetch-only && tsc --noEmit",
+    "test": "node test/userscript.ts"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.0.0",
@@ -19,6 +19,7 @@
     "uplot": "~1.6.30"
   },
   "devDependencies": {
+    "@types/node": "^24.19.2",
     "@types/react": "^17.0.11",
     "@types/react-dom": "^17.0.7",
     "esbuild": "^0.25.0",

@@ -8,7 +8,7 @@ const commit = "4c2b99a69b03dc0af56642dcf7ed9ef2015935e4";
 const cache = ".cache/isucon14-portal";
 const dist = "../internal/mockportal/dist";
 
-const git = (...args) => execFileSync("git", ["-C", cache, ...args], { encoding: "utf8" }).trim();
+const git = (...args: string[]) => execFileSync("git", ["-C", cache, ...args], { encoding: "utf8" }).trim();
 if (!existsSync(cache)) {
   execFileSync("git", ["clone", "--filter=blob:none", "--no-checkout", upstream, cache], { stdio: "inherit" });
 }

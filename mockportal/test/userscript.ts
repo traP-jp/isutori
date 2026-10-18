@@ -1,15 +1,30 @@
 // Runs the userscript (with its example adapter) against `isutori mock-portal`
 // and checks what it reports to a stand-in for the isutori receiver.
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
-import { chromium } from "playwright";
+import { chromium, type Browser } from "playwright";
+
+interface Result {
+  run_id: string;
+  passed?: boolean;
+  score?: number;
+  message?: string;
+  error?: string;
+}
+
+interface GMRequest {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  data: string;
+}
 
 execFileSync("go", ["build", "-o", ".cache/isutori", ".."], { stdio: "inherit" });
 const userscript = execFileSync(".cache/isutori", ["userscript"], { encoding: "utf8" });
 
-const portals = [];
-function startPortal(port, outcome) {
+const portals: ChildProcess[] = [];
+function startPortal(port: number, outcome: "pass" | "fail" | "error") {
   portals.push(
     spawn(".cache/isutori", ["mock-portal", "--listen", `127.0.0.1:${port}`, "--pending", "1s", "--running", "2s", "--outcome", outcome], {
       stdio: "ignore",
@@ -18,20 +33,20 @@ function startPortal(port, outcome) {
   return `http://127.0.0.1:${port}`;
 }
 
-const posted = new Map();
+const posted = new Map<string, (r: Result) => void>();
 const receiver = createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
-    const result = JSON.parse(body);
+    const result: Result = JSON.parse(body);
     posted.get(result.run_id)?.(result);
     res.writeHead(204).end();
   });
 }).listen(17880, "127.0.0.1");
 const receiverURL = "http://127.0.0.1:17880";
 
-function waitForResult(runId, timeoutMs = 20000) {
-  return new Promise((resolve, reject) => {
+function waitForResult(runId: string, timeoutMs = 20000) {
+  return new Promise<Result>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`no result for ${runId}`)), timeoutMs);
     posted.set(runId, (r) => {
       clearTimeout(timer);
@@ -40,9 +55,9 @@ function waitForResult(runId, timeoutMs = 20000) {
   });
 }
 
-async function newPage(browser) {
+async function newPage(browser: Browser) {
   const context = await browser.newContext();
-  await context.exposeBinding("__gmXhr", async (_source, d) => {
+  await context.exposeBinding("__gmXhr", async (_source, d: GMRequest) => {
     try {
       const res = await fetch(d.url, { method: d.method, headers: d.headers, body: d.data });
       return { status: res.status, responseText: await res.text() };
@@ -76,7 +91,7 @@ try {
     const r = await result;
     assert.equal(r.passed, true);
     assert.equal(r.score, 12345);
-    assert.match(r.message, /score=12345/);
+    assert.match(r.message ?? "", /score=12345/);
     assert.equal(r.error, undefined);
 
     // A second run in the same tab enqueues a new job instead of resuming.
@@ -92,7 +107,7 @@ try {
     const r = await result;
     assert.equal(r.passed, false);
     assert.equal(r.score, 0);
-    assert.match(r.message, /mock portal was configured to fail/);
+    assert.match(r.message ?? "", /mock portal was configured to fail/);
   }
   {
     const page = await newPage(browser);
@@ -100,7 +115,7 @@ try {
     await page.goto(`${error}/contestant#autobench=errored&receiver=${receiverURL}`);
     const r = await result;
     assert.equal(r.passed, false);
-    assert.match(r.message, /^ERRORED/);
+    assert.match(r.message ?? "", /^ERRORED/);
   }
   {
     // Reloading the job page while waiting resumes instead of enqueuing again.
@@ -122,7 +137,7 @@ try {
     const result = waitForResult("busy");
     await page.goto(`${pass}/contestant#autobench=busy&receiver=${receiverURL}`);
     const r = await result;
-    assert.match(r.error, /^enqueue: portal refused to enqueue: .*no other concurrent job/);
+    assert.match(r.error ?? "", /^enqueue: portal refused to enqueue: .*no other concurrent job/);
   }
   console.log("userscript: OK");
 } finally {

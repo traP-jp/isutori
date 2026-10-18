@@ -1,7 +1,8 @@
 {
   "compilerOptions": {
     "target": "es2022",
-    "moduleResolution": "node",
+    "module": "esnext",
+    "moduleResolution": "bundler",
     "strict": true,
     "jsx": "react",
     "noEmit": true,
@@ -15,5 +16,5 @@
       "@proto/*": [".cache/isucon14-portal/portal/proto/isuxportal/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src", "test", "build.ts"]
 }
