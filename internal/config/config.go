@@ -114,7 +114,7 @@ prepare = "ops/prepare.sh"
 collect = "ops/collect.sh"
 analyze = "ops/analyze.sh"
 publish = "ops/publish.sh"
-cleanup = "ops/cleanup.sh"  # deploy に進んだ回は失敗時も必ず呼ばれる
+cleanup = "ops/cleanup.sh"  # deploy に進んだ回は、失敗や中断があっても呼ばれる (リースが切れた場合を除く)
 
 [bench]
 method = "manual"     # userscript | manual
