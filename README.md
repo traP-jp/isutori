@@ -1,8 +1,8 @@
 # isutori
 
-ISUCON で、チームの共有サーバーへのデプロイとベンチ実行を 1 本ずつ順番に回すためのツールです。人が叩いても AI が叩いても同じように動きます。
+ISUCON で、チームの共有サーバーへのデプロイとベンチ実行を 1 本ずつ順番に回すためのツールです。
 
-キューは `queue.host` (通常 s1) 上に 1 チケット 1 ファイルで置き、SSH 越しに操作します。サーバー側に常駐プロセスは置きません。
+キューは `queue.host` (通常 s1) に SSH 越しで置きます。サーバーに常駐プロセスは置きません。
 
 ## 使い方
 
@@ -16,29 +16,28 @@ go run github.com/traP-jp/isutori@latest status --json
 
 | コマンド | 内容 |
 |---|---|
-| `bench [--ref REF] [--mode measure\|final] [--requester NAME]` | REF (既定 `HEAD`、origin に push 済みであること) をキューに並べ、先頭になったら段階コマンドを順に実行する |
+| `bench [--ref REF] [--mode measure\|final] [--requester NAME]` | REF (既定 `HEAD`、push 済みであること) をデプロイしてベンチを取る |
 | `guard` | 自分のチケットがキューの先頭でなければ 0 以外で終了する。デプロイ手段の冒頭で呼ぶ |
 | `status [--json]` | キューの中身と、最後にデプロイされたものを表示する |
 | `queue clear` | キューを空にする。止まったチケットの強制解除用 |
 | `init` | `isutori.toml` の雛形を書く |
-| `userscript [MATCH_PATTERN...]` | ユーザースクリプトを stdout に出す (下記) |
-| `mock-portal [--outcome pass\|fail\|error] ...` | 偽ポータルを起動する (下記) |
+| `userscript [MATCH_PATTERN...]` | ユーザースクリプトを書き出す |
+| `mock-portal` | 偽ポータルを起動する |
 
 `bench` は進行状況を stderr に、実行の要約 JSON を stdout に出します。終了コードは、ベンチが pass なら 0、途中でエラーなら 1、ベンチが fail なら 2 です。AI に使わせるときは、バックグラウンドで起動して待ち時間に別の作業をさせてください。
 
 ## 測定の流れ
 
-1. 指定 REF が origin にあることを確かめ、`ops.ref` (既定 `origin/main`) の中身を `.isutori/runs/<run_id>/ops/` に取り出す。以後、`isutori.toml` と段階コマンドはここのものを使う
-2. キューにチケットを置き、先頭になるまで待つ。待っている間もリースを延長し続ける
-3. `deploy` → `health` → (`deployed.json` を記録) → `prepare` → ベンチ → `collect` → `analyze` → `publish` の順に進む
-4. `cleanup`。`deploy` に進んだ回は、途中で失敗しても Ctrl-C で止めても必ず呼ぶ
-5. チケットを消す
+1. REF が origin にあるか確かめ、`ops.ref` (既定 `origin/main`) を取り出す。`isutori.toml` と段階コマンドはここのものを使う
+2. キューに並び、先頭になるまで待つ
+3. `deploy` → `health` → `prepare` → ベンチ → `collect` → `analyze` → `publish` の順に進む
+4. `cleanup`。`deploy` に進んだ回は、途中で失敗しても Ctrl-C で止めても呼ぶ
 
-リースが切れて自分のチケットが消えていた場合は、サーバーがすでに次の人のものになっている可能性があるため、`cleanup` を呼ばずに終了します。
+ただし、リースが切れていた回は、サーバーが次の人に渡っている可能性があるため `cleanup` を呼びません。
 
 ## 段階コマンドとの約束事
 
-段階コマンドは `isutori.toml` の `[hooks]` に書き、`ops/` を作業ディレクトリとして `sh -c` で実行します。0 以外で終了すると、残りを飛ばして `cleanup` へ進みます。未設定の段階は飛ばします (`deploy` だけは必須)。
+段階コマンドは `isutori.toml` の `[hooks]` に書き、`ops.ref` から取り出したディレクトリで `sh -c` で実行します。0 以外で終了すると、残りを飛ばして `cleanup` へ進みます。未設定の段階は飛ばします (`deploy` は必須)。段階コマンドの中では `isutori guard` をそのまま呼べます。
 
 段階コマンドには次の環境変数を渡します。
 
@@ -52,8 +51,6 @@ go run github.com/traP-jp/isutori@latest status --json
 | `ISUTORI_REPO` | 手元の競技リポジトリのルート |
 | `ISUTORI_CONFIG` | 使っている `isutori.toml` |
 
-`PATH` の先頭には、実行中の isutori 自身を指す `isutori` が入っているため、`isutori guard` はそのまま呼べます。
-
 `$ISUTORI_RUN_DIR` には次のファイルができます。
 
 - `run.json`: チケット、各段階の所要時間、ベンチ結果。段階が終わるたびに更新されるので、`publish` から読めます
@@ -62,30 +59,25 @@ go run github.com/traP-jp/isutori@latest status --json
 
 ## ベンチ結果の受け取り
 
-ベンチの段階では、`bench.listen` (既定 `127.0.0.1:7878`) で受信サーバーが立ちます。
+`bench.method` で選びます。
 
 - `manual`: `http://127.0.0.1:7878/` を開き、ポータルの結果をフォームに貼り付けて送信します
-- `userscript`: `portal_url#autobench=<run_id>&receiver=<URL>` をブラウザで開きます。開くコマンドは `bench.open_command` で指定でき、未指定なら `wslview`、`xdg-open`、`open` の順に探して最初に見つかったものを使います。開いたページではユーザースクリプトが Enqueue を押し、結果を `POST /api/result` に送ります
+- `userscript`: isutori がポータルをブラウザで開き、ユーザースクリプトが Enqueue して結果を送ります。ブラウザを開くコマンドは `bench.open_command` で指定でき、未指定なら `wslview`、`xdg-open`、`open` のうち最初に見つかったものを使います
 
-`POST /api/result` は `Content-Type: application/json` で、`{"run_id", "passed", "score", "message"}` を受け取ります。結果を得られなかったときは `{"run_id", "error"}` を送ります。このときは bench の段階がエラーになり、`isutori bench` は 1 で終了します。
+ユーザースクリプトが結果を得られなかったときは、ベンチの fail ではなくエラー (終了コード 1) になります。
 
 ### ユーザースクリプト
 
 `isutori userscript 'https://portal.example.com/*' > isutori.user.js` で書き出し、Tampermonkey に入れます。
 
-ポータルの画面に依存するのは先頭の `adapter` だけで、当日はここを書き換えます。満たすべき約束事と、ベンチを消費せずに `adapter` を確かめる方法は、スクリプト内のコメントに書いてあります。同梱の実装は ISUCON14 のポータル (偽ポータル) 向けの例です。
-
-当日書き換えた版は競技リポジトリに保存し、全員で同じものを使ってください。
+当日書き換えるのは、ポータルの画面に依存する先頭の `adapter` だけです。満たすべき約束事と、ベンチを消費せずに確かめる方法は、スクリプト内のコメントにあります。同梱の実装は偽ポータル向けです。書き換えた版は競技リポジトリに保存し、全員で同じものを使ってください。
 
 ## 偽ポータル
 
-`isutori mock-portal` は、ISUCON14 のポータル ([isucon/isucon14-portal](https://github.com/isucon/isucon14-portal)、MIT License) の競技者画面を、ブラウザ内の偽データで動かします。ユーザースクリプトを本番前に試すためのものです。
+`isutori mock-portal` は、[ISUCON14 のポータル](https://github.com/isucon/isucon14-portal) の競技者画面を偽のデータで動かします。ユーザースクリプトを本番前に試すためのものです。
 
-- ジョブは `--pending` の間 PENDING、`--running` の間 RUNNING になり、その後 `--outcome` の結果で終わります。ジョブは localStorage に残ります
-- 実行中に Enqueue すると、本物と同じく 422 で拒否されます
-- 初回は対象サーバーが未選択で、そのまま Enqueue すると 404 になります。これも本物と同じです
-
-画面のビルド成果物は `internal/mockportal/dist/` にコミットしてあるので、使うだけなら Node は不要です。画面を変えるときは `mockportal/` で `pnpm install && pnpm build` します。`pnpm test` は、偽ポータルに対してユーザースクリプトを動かし、送られる結果を確かめます (初回は `pnpm exec playwright install chromium` が必要です)。`pnpm typecheck` は、偽ポータルの画面とスクリプトに加えて、ユーザースクリプトも JSDoc の型で検査します。
+- ジョブは `--pending` と `--running` の時間をかけて進み、`--outcome` (`pass` / `fail` / `error`) の結果で終わります
+- 本物と同じく、実行中に Enqueue すると 422 で断られ、対象サーバーを選ばずに Enqueue すると 404 になります
 
 ## 開発
 
@@ -93,4 +85,15 @@ go run github.com/traP-jp/isutori@latest status --json
 mise install
 go test ./...
 testenv/e2e.sh   # Docker の sshd を s1 に見立て、3 人同時の bench で排他と後始末を確かめる
+```
+
+偽ポータルの画面は `mockportal/` でビルドし、成果物を `internal/mockportal/dist/` にコミットしています。isutori を使うだけなら Node は不要です。
+
+```sh
+cd mockportal
+pnpm install
+pnpm exec playwright install chromium   # 初回のみ
+pnpm build       # 画面をビルドして dist/ を更新する
+pnpm typecheck   # 画面、スクリプト、ユーザースクリプトの型検査
+pnpm test        # 偽ポータルに対してユーザースクリプトを動かす
 ```
