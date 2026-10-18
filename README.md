@@ -21,6 +21,7 @@ go run github.com/traP-jp/isutori@latest status --json
 | `status [--json]` | キューの中身と、最後にデプロイされたもの |
 | `queue clear` | キューを空にする。止まったチケットの強制解除用 |
 | `init` | `isutori.toml` の雛形を書く |
+| `mock-portal [--outcome pass\|fail\|error] ...` | 偽ポータルを起動する (下記) |
 
 `bench` は進行状況を stderr に、実行の要約 JSON を stdout に出します。終了コードは、ベンチが pass なら 0、途中でエラーなら 1、ベンチが fail なら 2 です。AI に使わせるときは、バックグラウンドで起動して待ち時間に別の作業をさせてください。
 
@@ -66,6 +67,16 @@ go run github.com/traP-jp/isutori@latest status --json
 - `userscript`: `portal_url#autobench=<run_id>&receiver=<URL>` をブラウザで開きます。ユーザースクリプトが Enqueue を押し、結果を `POST /api/result` に送ります (ユーザースクリプトの骨格は未実装)
 
 `POST /api/result` は `Content-Type: application/json` で、`{"run_id", "passed", "score", "message"}` を受け取ります。
+
+## 偽ポータル
+
+`isutori mock-portal` は、ISUCON14 のポータル ([isucon/isucon14-portal](https://github.com/isucon/isucon14-portal)、MIT License) の競技者画面を、ブラウザ内の偽データで動かします。ユーザースクリプトを本番前に試すためのものです。
+
+- ジョブは `--pending` の間 PENDING、`--running` の間 RUNNING になり、その後 `--outcome` の結果で終わります。ジョブは localStorage に残ります
+- 実行中に Enqueue すると、本物と同じく 422 で拒否されます
+- 初回は対象サーバーが未選択で、そのまま Enqueue すると 404 になります。これも本物と同じです
+
+画面のビルド成果物は `internal/mockportal/dist/` にコミットしてあるので、使うだけなら Node は不要です。画面を変えるときは `mockportal/` で `pnpm install && pnpm build` し、`pnpm test` で確かめます。
 
 ## 開発
 

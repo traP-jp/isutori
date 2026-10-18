@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/traP-jp/isutori/internal/config"
+	"github.com/traP-jp/isutori/internal/mockportal"
 	"github.com/traP-jp/isutori/internal/queue"
 	"github.com/traP-jp/isutori/internal/runner"
 )
@@ -27,6 +29,7 @@ const usage = `usage:
   isutori status [--json]
   isutori queue clear
   isutori init
+  isutori mock-portal [--listen ADDR] [--pending D] [--running D] [--outcome pass|fail|error] [--score N]
 
 exit codes of bench: 0 benchmark passed, 1 error, 2 benchmark failed
 `
@@ -62,6 +65,8 @@ func dispatch(ctx context.Context, args []string) (int, error) {
 		return exitCode(clearQueue(ctx))
 	case "init":
 		return exitCode(initRepo(ctx))
+	case "mock-portal":
+		return exitCode(mockPortal(ctx, rest))
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		return 1, fmt.Errorf("unknown command %q", cmd)
@@ -220,6 +225,34 @@ func initRepo(ctx context.Context) error {
 		b = append(b, '\n')
 	}
 	return os.WriteFile(ignore, append(b, "/.isutori/\n"...), 0o644)
+}
+
+func mockPortal(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("mock-portal", flag.ContinueOnError)
+	listen := fs.String("listen", "127.0.0.1:7879", "address to serve on")
+	var c mockportal.Config
+	fs.DurationVar(&c.Pending, "pending", 3*time.Second, "time a job stays PENDING")
+	fs.DurationVar(&c.Running, "running", 10*time.Second, "time a job stays RUNNING")
+	outcome := fs.String("outcome", string(mockportal.Pass), "result of jobs enqueued from now: pass, fail or error")
+	fs.Int64Var(&c.Score, "score", 12345, "score of passed jobs")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	c.Outcome = mockportal.Outcome(*outcome)
+	h, err := mockportal.Handler(c)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{Addr: *listen, Handler: h, ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		<-ctx.Done()
+		srv.Close()
+	}()
+	fmt.Fprintf(os.Stderr, "mock portal: http://%s/contestant\n", *listen)
+	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
 
 func loadRepoConfig(ctx context.Context) (*config.Config, error) {
