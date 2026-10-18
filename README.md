@@ -71,15 +71,11 @@ go run github.com/traP-jp/isutori@latest status --json
 
 ### ユーザースクリプト
 
-`isutori userscript 'https://portal.example.com/*' > isutori.user.js` で書き出し、Tampermonkey に入れます。中身は 2 つに分かれています。
+`isutori userscript 'https://portal.example.com/*' > isutori.user.js` で書き出し、Tampermonkey に入れます。
 
-- 先頭の `adapter`: ポータルの画面に依存する部分。当日のポータルに合わせて書き換えます。同梱の実装は ISUCON14 のポータル (偽ポータル) 向けの例です
-  - `enqueue()`: ジョブを 1 つ始め、それを指す値を返す。ポータルに断られたら例外を投げる
-  - `currentJob()`: いま表示しているジョブを指す値を返す。Enqueue でページが再読み込みされたときの再開に使う
-  - `readResult(job)`: 実行中なら `null`、終わったら `{passed, score, message}` を返す
-- それ以外: URL の印の検出、状態の保存 (sessionStorage)、結果の送信、タイムアウト。ポータルに依存しません
+ポータルの画面に依存するのは先頭の `adapter` だけで、当日はここを書き換えます。満たすべき約束事と、ベンチを消費せずに `adapter` を確かめる方法は、スクリプト内のコメントに書いてあります。同梱の実装は ISUCON14 のポータル (偽ポータル) 向けの例です。
 
-Tampermonkey のメニューの「isutori: read this page」は、いま表示しているジョブを `readResult(null)` で読んで表示します。ベンチを消費せずに `adapter` を確かめられます。当日書き換えた版は競技リポジトリに保存し、全員で同じものを使ってください。
+当日書き換えた版は競技リポジトリに保存し、全員で同じものを使ってください。
 
 ## 偽ポータル
 
