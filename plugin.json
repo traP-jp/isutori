@@ -6,17 +6,10 @@
   "author": {
     "name": "traP"
   },
-  "homepage": "https://github.com/traP-jp/isutori",
   "repository": "https://github.com/traP-jp/isutori",
   "extensions": {
     "com.openai": {
-      "onboardingSkill": "./skills/setup/SKILL.md",
-      "interface": {
-        "displayName": "isutori",
-        "shortDescription": "Deploy-and-benchmark queue for ISUCON teams",
-        "developerName": "traP",
-        "category": "Coding"
-      }
+      "onboardingSkill": "./skills/setup/SKILL.md"
     }
   }
 }
