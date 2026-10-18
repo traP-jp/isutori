@@ -85,7 +85,7 @@ go run github.com/traP-jp/isutori@latest status --json
 - 実行中に Enqueue すると、本物と同じく 422 で拒否されます
 - 初回は対象サーバーが未選択で、そのまま Enqueue すると 404 になります。これも本物と同じです
 
-画面のビルド成果物は `internal/mockportal/dist/` にコミットしてあるので、使うだけなら Node は不要です。画面を変えるときは `mockportal/` で `pnpm install && pnpm build` します。`pnpm test` は、偽ポータルに対してユーザースクリプトを動かし、送られる結果を確かめます (初回は `pnpm exec playwright install chromium` が必要です)。
+画面のビルド成果物は `internal/mockportal/dist/` にコミットしてあるので、使うだけなら Node は不要です。画面を変えるときは `mockportal/` で `pnpm install && pnpm build` します。`pnpm test` は、偽ポータルに対してユーザースクリプトを動かし、送られる結果を確かめます (初回は `pnpm exec playwright install chromium` が必要です)。`pnpm typecheck` は、偽ポータルの画面とスクリプトに加えて、ユーザースクリプトも JSDoc の型で検査します。
 
 ## 開発
 

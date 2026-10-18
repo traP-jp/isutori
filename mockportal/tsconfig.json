@@ -6,6 +6,7 @@
     "strict": true,
     "jsx": "react",
     "noEmit": true,
+    "allowJs": true,
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
     "useUnknownInCatchVariables": false,
@@ -16,5 +17,5 @@
       "@proto/*": [".cache/isucon14-portal/portal/proto/isuxportal/*"]
     }
   },
-  "include": ["src", "test", "build.ts"]
+  "include": ["src", "test", "build.ts", "../internal/userscript/isutori.user.js"]
 }

@@ -11,6 +11,8 @@
 // @run-at       document-idle
 // ==/UserScript==
 
+// @ts-check
+
 (function () {
   "use strict";
 
@@ -18,56 +20,69 @@
   // The example below targets isucon14-portal (and `isutori mock-portal`).
   // Try readResult on a finished job page with the "read this page" menu
   // command of the userscript manager; it does not enqueue anything.
+
+  /**
+   * Identifies a job. It is kept in sessionStorage, so it must survive JSON.
+   * @typedef {{ jobId: string }} Job
+   */
+
   const adapter = {
-    // Starts exactly one benchmark job on the page that isutori opened, and
-    // returns a JSON-serializable reference to it. Throw if the portal
-    // refuses, e.g. because another job is running.
+    /**
+     * Starts exactly one benchmark job on the page that isutori opened.
+     * @returns {Promise<Job>}
+     * @throws if the portal refuses, e.g. because another job is running.
+     */
     async enqueue() {
       const select = await waitFor(() => document.querySelector("select"));
       if (select.value === "") {
         select.value = select.options[0].value;
         select.dispatchEvent(new Event("change", { bubbles: true }));
       }
-      const button = [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Enqueue");
+      const button = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Enqueue");
       if (!button) throw new Error("Enqueue button not found");
       button.click();
       return waitFor(() => {
         const job = adapter.currentJob();
         if (job) return job;
         const error = document.querySelector(".message.is-danger, .notification.is-danger");
-        if (error) throw new Error(`portal refused to enqueue: ${error.textContent.trim()}`);
+        if (error) throw new Error(`portal refused to enqueue: ${error.textContent?.trim()}`);
         return null;
       });
     },
 
-    // Returns a reference to the job shown on the current page, or null.
-    // Used to resume when enqueuing reloads the page.
+    /**
+     * Used to resume when enqueuing reloads the page.
+     * @returns {Job | null} the job shown on the current page.
+     */
     currentJob() {
       const m = location.pathname.match(/^\/contestant\/benchmark_jobs\/(\d+)$/);
       return m ? { jobId: m[1] } : null;
     },
 
-    // Returns null while the job is still running, otherwise
-    // { passed, score, message }. With job === null, reads whatever job the
-    // current page shows.
+    /**
+     * @param {Job | null} job null reads whatever job the current page shows.
+     * @returns {BenchResult | null} null while the job is still running.
+     */
     readResult(job) {
       if (job && location.pathname !== `/contestant/benchmark_jobs/${job.jobId}`) {
         throw new Error(`left the job page: ${location.pathname}`);
       }
+      /** @param {string} title */
       const card = (title) =>
-        [...document.querySelectorAll(".card")].find(
-          (c) => c.querySelector(".card-header-title")?.textContent.trim() === title,
+        [.../** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll(".card"))].find(
+          (c) => c.querySelector(".card-header-title")?.textContent?.trim() === title,
         );
       const summary = card("Summary");
       if (!summary) return null;
-      const status = summary.querySelector(".tag")?.textContent.trim();
-      const conclusion = card("Conclusion")?.querySelector(".card-content")?.innerText.trim() ?? "";
+      const status = summary.querySelector(".tag")?.textContent?.trim();
+      const conclusion =
+        /** @type {HTMLElement | null | undefined} */ (card("Conclusion")?.querySelector(".card-content"))?.innerText.trim() ?? "";
       if (status === "ERRORED") {
         return { passed: false, score: 0, message: `ERRORED\n${conclusion}`.trim() };
       }
       if (status !== "FINISHED") return null;
       const result = card("Result");
-      const tags = [...(result?.querySelectorAll(".tag") ?? [])].map((t) => t.textContent.trim());
+      const tags = [...(result?.querySelectorAll(".tag") ?? [])].map((t) => t.textContent?.trim());
       const score = result?.innerText.match(/Score:\s*(-?\d+)/);
       if (!tags.includes("Finished") || !score) return null;
       return { passed: tags.includes("Passed"), score: Number(score[1]), message: conclusion };
@@ -75,11 +90,35 @@
   };
   // ===== END OF PORTAL ADAPTER =====
 
+  /** @typedef {{ passed: boolean, score: number, message: string }} BenchResult */
+
+  /**
+   * What is posted to the isutori receiver along with the run id.
+   * @typedef {BenchResult | { error: string }} Report
+   */
+
+  /**
+   * @typedef {object} Run
+   * @property {string} runId
+   * @property {string} receiver
+   * @property {number} startedAt epoch milliseconds
+   * @property {string} [note]
+   */
+
+  /**
+   * @typedef {Run & ({ phase: "enqueue" | "enqueuing" | "done" | "unreported" } | { phase: "waiting", job: Job })} State
+   */
+
   const pollMs = 2000;
   const enqueueTimeoutMs = 60 * 1000;
   const resultTimeoutMs = 20 * 60 * 1000;
   const storageKey = "isutori-autobench";
 
+  /**
+   * @template T
+   * @param {() => T | null | undefined} fn
+   * @returns {Promise<T>}
+   */
   async function waitFor(fn, timeoutMs = enqueueTimeoutMs) {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
@@ -90,24 +129,30 @@
     }
   }
 
+  /** @param {number} ms */
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  /** @returns {State | null} */
   function loadState() {
     try {
-      return JSON.parse(sessionStorage.getItem(storageKey));
+      return JSON.parse(sessionStorage.getItem(storageKey) ?? "null");
     } catch {
       return null;
     }
   }
 
+  /** @param {State} state */
   function saveState(state) {
     sessionStorage.setItem(storageKey, JSON.stringify(state));
     show(state);
   }
 
-  // Each tab tracks at most one run; reopening the same run id resumes it.
+  /**
+   * Each tab tracks at most one run; reopening the same run id resumes it.
+   * @returns {State | null}
+   */
   function stateFromHash() {
     const params = new URLSearchParams(location.hash.slice(1));
     const runId = params.get("autobench");
@@ -119,6 +164,11 @@
     return { runId, receiver, phase: "enqueue", startedAt: Date.now() };
   }
 
+  /**
+   * @param {State} state
+   * @param {Report} body
+   * @returns {Promise<void>}
+   */
   function post(state, body) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
@@ -135,15 +185,20 @@
     });
   }
 
+  /**
+   * @param {State} state
+   * @param {Report} body
+   */
   async function report(state, body) {
     try {
       await post(state, body);
-      saveState({ ...state, phase: "done", note: body.error ?? `passed=${body.passed} score=${body.score}` });
+      saveState({ ...state, phase: "done", note: "error" in body ? body.error : `passed=${body.passed} score=${body.score}` });
     } catch (e) {
       saveState({ ...state, phase: "unreported", note: `could not report to isutori: ${e.message}` });
     }
   }
 
+  /** @param {State} state */
   async function run(state) {
     if (state.phase === "enqueue") {
       saveState({ ...state, phase: "enqueuing" });
@@ -184,7 +239,9 @@
     }
   }
 
+  /** @type {HTMLDivElement | undefined} */
   let badge;
+  /** @param {State} state */
   function show(state) {
     if (!badge) {
       badge = document.createElement("div");

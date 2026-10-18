@@ -48,6 +48,9 @@ importers:
       '@types/react-dom':
         specifier: ^17.0.7
         version: 17.0.26(@types/react@17.0.93)
+      '@types/tampermonkey':
+        specifier: ^5.5.0
+        version: 5.5.0
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
@@ -351,6 +354,9 @@ packages:
 
   '@types/scheduler@0.16.8':
     resolution: {integrity: sha512-WZLiwShhwLRmeV6zH+GkbOFT6Z6VklCItrDioxUnv+u4Ll+8vKeFySoFyK/0ctcRpOmwAicELfmys1sDc/Rw+A==}
+
+  '@types/tampermonkey@5.5.0':
+    resolution: {integrity: sha512-I90oAlYhgP7DFr5LbwdvPNSd51SULGT6zLw6A+nK4FtRlgDsAYtKShWhsxjmU6LzSWI2XbPq8oAQE/ckZHW2LQ==}
 
   bulma@0.9.4:
     resolution: {integrity: sha512-86FlT5+1GrsgKbPLRRY7cGDg8fsJiP/jzTqXXVqiUZZ2aZT8uemEOHlU1CDU+TxklPEZ11HZNNWclRBBecP4CQ==}
@@ -660,6 +666,8 @@ snapshots:
       csstype: 3.2.3
 
   '@types/scheduler@0.16.8': {}
+
+  '@types/tampermonkey@5.5.0': {}
 
   bulma@0.9.4: {}
 
