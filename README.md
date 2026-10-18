@@ -2,7 +2,7 @@
 
 ISUCON で、チームの共有サーバーへのデプロイとベンチ実行を 1 本ずつ順番に回すためのツールです。
 
-キューは `queue.host` (通常 s1) に SSH 越しで置きます。サーバーに常駐プロセスは置きません。
+キューは `queue.host` (通常 s1) に置き、SSH 越しに操作します。サーバーに常駐プロセスは置きません。
 
 ## 使い方
 
@@ -28,7 +28,7 @@ go run github.com/traP-jp/isutori@latest status --json
 
 ## 測定の流れ
 
-1. REF が origin にあるか確かめ、`ops.ref` (既定 `origin/main`) を取り出す。`isutori.toml` と段階コマンドはここのものを使う
+1. REF が origin にあるか確かめ、`ops.ref` (既定 `origin/main`) を取り出す。`isutori.toml` と段階コマンドは、取り出したものを使う
 2. キューに並び、先頭になるまで待つ
 3. `deploy` → `health` → `prepare` → ベンチ → `collect` → `analyze` → `publish` の順に進む
 4. `cleanup`。`deploy` に進んだ回は、途中で失敗しても Ctrl-C で止めても呼ぶ
@@ -37,7 +37,7 @@ go run github.com/traP-jp/isutori@latest status --json
 
 ## 段階コマンドとの約束事
 
-段階コマンドは `isutori.toml` の `[hooks]` に書き、`ops.ref` から取り出したディレクトリで `sh -c` で実行します。0 以外で終了すると、残りを飛ばして `cleanup` へ進みます。未設定の段階は飛ばします (`deploy` は必須)。段階コマンドの中では `isutori guard` をそのまま呼べます。
+段階コマンドは `isutori.toml` の `[hooks]` に書き、`ops.ref` から取り出したディレクトリを作業ディレクトリにして、`sh -c` で実行します。0 以外で終了すると、残りを飛ばして `cleanup` へ進みます。未設定の段階は飛ばします (`deploy` は必須)。段階コマンドの中では `isutori guard` をそのまま呼べます。
 
 段階コマンドには次の環境変数を渡します。
 
@@ -59,12 +59,12 @@ go run github.com/traP-jp/isutori@latest status --json
 
 ## ベンチ結果の受け取り
 
-`bench.method` で選びます。
+受け取り方は `bench.method` で選びます。
 
 - `manual`: `http://127.0.0.1:7878/` を開き、ポータルの結果をフォームに貼り付けて送信します
 - `userscript`: isutori がポータルをブラウザで開き、ユーザースクリプトが Enqueue して結果を送ります。ブラウザを開くコマンドは `bench.open_command` で指定でき、未指定なら `wslview`、`xdg-open`、`open` のうち最初に見つかったものを使います
 
-ユーザースクリプトが結果を得られなかったときは、ベンチの fail ではなくエラー (終了コード 1) になります。
+ユーザースクリプトが結果を得られなかったときは、`isutori bench` はベンチの fail ではなくエラー (終了コード 1) として終了します。
 
 ### ユーザースクリプト
 
