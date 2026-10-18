@@ -1,0 +1,40 @@
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: npm
+    directory: /mockportal
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      mockportal:
+        patterns: ["*"]
+    ignore:
+      # The bundled isucon14-portal sources are written for React 17.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      # Newer TypeScript (seen with 5.9) rejects Uint8Array bodies in the upstream ApiClient.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-minor"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: docker
+    directory: /testenv
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
