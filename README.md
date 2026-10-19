@@ -4,6 +4,23 @@ ISUCON で、チームの共有サーバーへのデプロイとベンチ実行�
 
 キューは `queue.host` (通常 s1) に置き、SSH 越しに操作します。サーバーに常駐プロセスは置きません。
 
+## エージェントで導入する
+
+Claude Code か Codex を使っているなら、plugin を入れて `setup-isutori` を実行すれば、導入はエージェントに任せられます。既存のデプロイ手段や集計スクリプトを isutori に結び付けるところから、最初のベンチで確かめるところまで、エージェントが必要なことを尋ねながら進めます。
+
+```sh
+# Claude Code
+claude plugin install isutori --marketplace traP-jp/isutori
+# 競技リポジトリで /isutori:setup-isutori <ポータルの URL> を実行する
+
+# Codex
+codex plugin marketplace add traP-jp/isutori
+codex plugin add isutori@isutori
+# 競技リポジトリで $ から isutori:setup-isutori を選び、ポータルの URL を添えて実行する
+```
+
+以降の章は、手で導入するときと、導入した後の動きを知りたいときのための説明です。
+
 ## 使い方
 
 競技リポジトリの直下で実行します。
@@ -92,19 +109,6 @@ Ctrl-C をもう一度押すと、`cleanup` の終わりを待たずに終了し
 
 - ジョブは `--pending` と `--running` の時間をかけて進み、`--outcome` (`pass` / `fail` / `error`) の結果で終わります
 - 本物と同じく、実行中に Enqueue すると 422 で断られ、対象サーバーを選ばずに Enqueue すると 404 になります
-
-## エージェントでの組み込み
-
-競技リポジトリで plugin を入れて `setup-isutori` の skill を実行すると、エージェントが isutori を組み込みます。ポータルの URL を一緒に伝えてください。
-
-```sh
-# Claude Code: /isutori:setup-isutori で実行する
-claude plugin install isutori --marketplace traP-jp/isutori
-
-# Codex: $ から isutori:setup-isutori を選んで実行する
-codex plugin marketplace add traP-jp/isutori
-codex plugin add isutori@isutori
-```
 
 ## 開発
 
