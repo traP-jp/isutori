@@ -65,7 +65,7 @@ type run struct {
 // the queue. The returned Summary is non-nil whenever a run directory exists.
 func Run(ctx context.Context, opts Options) (*Summary, error) {
 	root := opts.RepoRoot
-	if _, err := git(ctx, root, "fetch", "--quiet", "origin"); err != nil {
+	if _, err := git(ctx, root, "fetch", "--quiet", "--prune", "origin"); err != nil {
 		return nil, err
 	}
 	appCommit, err := git(ctx, root, "rev-parse", "--verify", opts.Ref+"^{commit}")
@@ -75,7 +75,7 @@ func Run(ctx context.Context, opts Options) (*Summary, error) {
 	if name, err := git(ctx, root, "rev-parse", "--abbrev-ref", opts.Ref); err == nil && name != "" {
 		opts.Ref = name
 	}
-	if remotes, err := git(ctx, root, "branch", "--remotes", "--contains", appCommit); err != nil {
+	if remotes, err := git(ctx, root, "branch", "--remotes", "--contains", appCommit, "--list", "origin/*"); err != nil {
 		return nil, err
 	} else if remotes == "" {
 		return nil, fmt.Errorf("%s (%s) is not on origin; push it first so the servers can fetch it", opts.Ref, appCommit)
