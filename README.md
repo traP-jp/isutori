@@ -54,6 +54,7 @@ isutori status --json
 | `queue clear` | キューを空にする。キューが詰まったときの強制解除用 |
 | `init` | `isutori.toml` の雛形を書く |
 | `docs` | この README を表示する |
+| `help` | コマンドの一覧と使い方を表示する |
 | `userscript [MATCH_PATTERN...]` | ユーザースクリプトを書き出す |
 | `mock-portal` | 偽ポータルを起動する |
 

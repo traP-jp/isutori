@@ -28,17 +28,28 @@ import (
 	"github.com/traP-jp/isutori/internal/userscript"
 )
 
-const usage = `usage:
-  isutori bench [--ref REF] [--mode measure|final] [--requester NAME]
-  isutori guard
-  isutori receive [--listen ADDR]
-  isutori autobench [--listen ADDR] [--open-command CMD] PORTAL_URL TARGET
-  isutori status [--json]
-  isutori queue clear
-  isutori init
-  isutori userscript [MATCH_PATTERN...]
-  isutori docs
-  isutori mock-portal [--listen ADDR] [--pending D] [--running D] [--outcome pass|fail|error] [--score N]
+const usage = `usage: isutori <command> [arguments]
+
+  bench [--ref REF] [--mode measure|final] [--requester NAME]
+      deploy REF (HEAD by default) and benchmark it when its turn comes
+  guard
+      fail unless this run is at the head of the queue; call it first in deploy
+  receive [--listen ADDR]
+      from hooks.bench: wait for a result entered by hand
+  autobench [--listen ADDR] [--open-command CMD] PORTAL_URL TARGET
+      from hooks.bench: let the userscript run the benchmark against TARGET
+  status [--json]
+      show the queue and what was deployed last
+  queue clear
+      empty a stuck queue
+  init
+      write an isutori.toml template and ignore .isutori/
+  userscript [MATCH_PATTERN...]
+      print the userscript for the portal
+  docs
+      print the README
+  mock-portal [--listen ADDR] [--pending D] [--running D] [--outcome pass|fail|error] [--score N]
+      serve a fake portal for trying the userscript
 
 exit codes of bench: 0 benchmark passed, 1 error, 2 benchmark failed
 `
@@ -76,6 +87,9 @@ func dispatch(ctx, abort context.Context, args []string) (int, error) {
 		return 1, nil
 	}
 	switch cmd, rest := args[0], args[1:]; cmd {
+	case "help", "-h", "--help":
+		fmt.Print(usage)
+		return 0, nil
 	case "bench":
 		return bench(ctx, abort, rest)
 	case "guard":
