@@ -185,9 +185,9 @@ func (r *run) execute(parent context.Context) error {
 		name string
 		fn   func(context.Context) error
 	}{
-		{"deploy", r.hook(h.Deploy)},
+		{"deploy", r.deploy},
 		{"health", r.hook(h.Health)},
-		{"record", r.recordDeployed},
+		{"record", r.recordDeployed("healthy")},
 		{"prepare", r.hook(h.Prepare)},
 		{"bench", r.bench},
 		{"collect", r.hook(h.Collect)},
@@ -307,22 +307,34 @@ func (r *run) hook(cmdline string) func(context.Context) error {
 	}
 }
 
-func (r *run) recordDeployed(ctx context.Context) error {
-	t := r.summary.Ticket
-	body, err := json.Marshal(map[string]any{
-		"run_id":      r.summary.RunID,
-		"ticket":      t.ID,
-		"by":          t.Requester,
-		"ref":         t.Ref,
-		"app_commit":  t.AppCommit,
-		"ops_commit":  r.summary.OpsCommit,
-		"mode":        t.Mode,
-		"deployed_at": time.Now(),
-	})
-	if err != nil {
+// deploy records the deploy before starting it, so that a deploy that fails
+// halfway still shows up in `isutori status`.
+func (r *run) deploy(ctx context.Context) error {
+	if err := r.recordDeployed("deploying")(ctx); err != nil {
 		return err
 	}
-	return r.q.WriteDeployed(ctx, body)
+	return r.hook(r.cfg.Hooks.Deploy)(ctx)
+}
+
+func (r *run) recordDeployed(state string) func(context.Context) error {
+	return func(ctx context.Context) error {
+		t := r.summary.Ticket
+		body, err := json.Marshal(map[string]any{
+			"state":       state,
+			"run_id":      r.summary.RunID,
+			"ticket":      t.ID,
+			"by":          t.Requester,
+			"ref":         t.Ref,
+			"app_commit":  t.AppCommit,
+			"ops_commit":  r.summary.OpsCommit,
+			"mode":        t.Mode,
+			"deployed_at": time.Now(),
+		})
+		if err != nil {
+			return err
+		}
+		return r.q.WriteDeployed(ctx, body)
+	}
 }
 
 func (r *run) bench(ctx context.Context) error {
