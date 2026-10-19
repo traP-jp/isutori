@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Shell runs a POSIX sh script on the host that holds the queue.
@@ -41,6 +42,9 @@ func run(cmd *exec.Cmd, stdin io.Reader) ([]byte, error) {
 	cmd.Stdin = stdin
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	// Without it, a ProxyCommand child holding the pipes keeps Run from
+	// returning after the context kills ssh.
+	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
 	}

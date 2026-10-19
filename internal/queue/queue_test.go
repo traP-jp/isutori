@@ -80,3 +80,13 @@ func TestDeployed(t *testing.T) {
 		t.Fatalf("got %s, %v", got, err)
 	}
 }
+
+func TestRunReturnsWhenAChildHoldsThePipes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := Local{}.Run(ctx, "sleep 30 & wait", nil)
+	if err == nil || time.Since(start) > 10*time.Second {
+		t.Fatalf("got %v after %v", err, time.Since(start))
+	}
+}
