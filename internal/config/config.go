@@ -67,6 +67,12 @@ func Load(path string) (*Config, error) {
 	if keys := md.Undecoded(); len(keys) > 0 {
 		return nil, fmt.Errorf("load %s: unknown keys %v", path, keys)
 	}
+	// The decoder reads an integer duration as nanoseconds.
+	for _, key := range []string{"queue.lease_ttl", "hooks.timeout", "bench.timeout"} {
+		if md.Type(strings.Split(key, ".")...) == "Integer" {
+			return nil, fmt.Errorf("load %s: %s must be a string such as \"10m\"", path, key)
+		}
+	}
 	if err := c.validate(); err != nil {
 		return nil, fmt.Errorf("load %s: %w", path, err)
 	}
