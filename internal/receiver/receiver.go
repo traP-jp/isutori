@@ -27,12 +27,17 @@ var manualHTML string
 
 var manualTmpl = template.Must(template.New("manual").Parse(manualHTML))
 
-// Wait serves the result endpoint on addr until a result for runID arrives.
-func Wait(ctx context.Context, addr, runID string) (Result, error) {
+func Listen(addr string) (net.Listener, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return Result{}, fmt.Errorf("listen %s (another isutori bench may be running on this machine): %w", addr, err)
+		return nil, fmt.Errorf("listen %s (another isutori bench may be running on this machine): %w", addr, err)
 	}
+	return ln, nil
+}
+
+// Wait serves the result endpoint on ln until a result for runID arrives, then
+// closes ln.
+func Wait(ctx context.Context, ln net.Listener, runID string) (Result, error) {
 	results := make(chan Result, 1)
 	srv := &http.Server{Handler: handler(runID, results), ReadHeaderTimeout: 10 * time.Second}
 	go srv.Serve(ln)

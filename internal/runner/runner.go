@@ -326,6 +326,10 @@ func (r *run) bench(ctx context.Context) error {
 	defer cancel()
 
 	b := r.cfg.Bench
+	ln, err := receiver.Listen(b.Listen)
+	if err != nil {
+		return err
+	}
 	r.log.Printf("manual input: http://%s/", b.Listen)
 	if b.Method == config.MethodUserscript {
 		u := b.PortalURL + "#" + url.Values{"autobench": {r.summary.RunID}, "receiver": {"http://" + b.Listen}}.Encode()
@@ -334,7 +338,7 @@ func (r *run) bench(ctx context.Context) error {
 			r.log.Printf("WARNING: %v; open the URL above yourself", err)
 		}
 	}
-	res, err := receiver.Wait(ctx, b.Listen, r.summary.RunID)
+	res, err := receiver.Wait(ctx, ln, r.summary.RunID)
 	if err != nil {
 		return err
 	}
