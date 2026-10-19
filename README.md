@@ -64,7 +64,7 @@ Host s1
 
 Ctrl-C をもう一度押すと、`cleanup` の終わりを待たずに終了します。
 
-`status` が表示するデプロイの記録には `state` があります。`deploy` を始める前に `deploying` として書き、`health` が通ると `healthy` に書き換えます。
+`status` が表示するデプロイの記録には `state` があります。`deploy` を始めるときに `deploying` として書き、`health` が通ると `healthy` に書き換えます。`health` が未設定なら、`healthy` ではなく `deployed` にします。
 
 ## 段階コマンドとの約束事
 

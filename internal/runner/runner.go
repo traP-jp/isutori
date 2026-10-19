@@ -194,10 +194,9 @@ func (r *run) execute(parent, abort context.Context) error {
 		name string
 		fn   func(context.Context) error
 	}{
-		{"record", r.recordDeployed("deploying")},
-		{"deploy", r.hook(h.Deploy)},
+		{"deploy", r.deploy},
 		{"health", r.hook(h.Health)},
-		{"record", r.recordDeployed("healthy")},
+		{"record", r.recordDeployed(deployedState(h.Health))},
 		{"prepare", r.hook(h.Prepare)},
 		{"bench", r.bench},
 		{"collect", r.hook(h.Collect)},
@@ -357,6 +356,22 @@ func (r *run) hook(cmdline string) func(context.Context) error {
 		}
 		return nil
 	}
+}
+
+// deploy records the deploy before starting it, so that a deploy that fails
+// halfway still shows up in `isutori status`.
+func (r *run) deploy(ctx context.Context) error {
+	if err := r.recordDeployed("deploying")(ctx); err != nil {
+		return err
+	}
+	return r.hook(r.cfg.Hooks.Deploy)(ctx)
+}
+
+func deployedState(healthHook string) string {
+	if healthHook == "" {
+		return "deployed"
+	}
+	return "healthy"
 }
 
 func (r *run) recordDeployed(state string) func(context.Context) error {
