@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 	"time"
 
@@ -48,6 +49,9 @@ func Load(path string) (*Config, error) {
 		Hooks: Hooks{Timeout: 10 * time.Minute, BenchTimeout: 20 * time.Minute},
 	}
 	md, err := toml.DecodeFile(path, c)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("%s not found; run `isutori init` to create it", path)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", path, err)
 	}
