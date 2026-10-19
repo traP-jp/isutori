@@ -217,7 +217,9 @@ func (r *run) keepLease(ctx context.Context, cancel context.CancelCauseFunc, nam
 			return
 		case <-t.C:
 		}
-		err := r.q.Renew(context.WithoutCancel(ctx), name)
+		renewCtx, cancelRenew := context.WithTimeout(ctx, r.cfg.Queue.LeaseTTL/4)
+		err := r.q.Renew(renewCtx, name)
+		cancelRenew()
 		if ctx.Err() != nil {
 			return
 		}
