@@ -100,6 +100,9 @@ func Run(ctx context.Context, opts Options) (*Summary, error) {
 		return nil, err
 	}
 	cfgPath := filepath.Join(opsDir, config.FileName)
+	if _, err := os.Stat(cfgPath); errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("%s is not on %s; commit it and push it there first", config.FileName, local.Ops.Ref)
+	}
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return nil, fmt.Errorf("%s at ops ref %s: %w", config.FileName, local.Ops.Ref, err)

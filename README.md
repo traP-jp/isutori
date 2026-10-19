@@ -23,11 +23,23 @@ codex plugin add isutori@isutori
 
 ## 手動で導入する
 
-チーム全員が同じバージョンを使うよう、競技リポジトリの直下で mise にバージョンを固定して入れます。
+次の環境を前提にしています。
+
+- 競技リポジトリを Git で管理していて、origin へ push できる
+- 手元から各サーバーへ、`ssh s1` のように SSH の別名で入れる
+- 手元に mise と Go がある (mise の `go:` バックエンドは Go でビルドする)
+- 手元が Linux、macOS、WSL のどれか (Windows で直接は動かない)
+
+チーム全員が同じバージョンを使うよう、競技リポジトリの直下で mise にバージョンを固定して入れ、雛形を作ります。
 
 ```sh
 mise use --pin go:github.com/traP-jp/isutori@latest
-isutori init                # isutori.toml の雛形を書き、.gitignore に追記する
+isutori init                # isutori.toml の雛形を書き、.gitignore に .isutori/ を足す
+```
+
+次に、`isutori.toml` の `[hooks]` を埋めます。埋めたら、フックのスクリプトと一緒に commit し、`ops.ref` のブランチ (既定は main) へ push します。isutori はフックと `isutori.toml` を origin から取り出して使うので、push する前の内容は使われません。
+
+```sh
 isutori bench               # HEAD をデプロイしてベンチを回す
 isutori status --json
 ```
@@ -35,17 +47,20 @@ isutori status --json
 | コマンド | 内容 |
 |---|---|
 | `bench [--ref REF] [--mode measure\|final] [--requester NAME]` | REF をデプロイしてベンチを回す |
-| `guard` | 自分の回がキューの先頭でなければ 0 以外で終了する |
+| `guard` | 自分の実行がキューの先頭でなければ 0 以外で終了する |
 | `receive [--listen ADDR]` | `bench` のフックから呼び、手動で入力された結果を受け取る |
 | `autobench [--listen ADDR] PORTAL_URL TARGET` | `bench` のフックから呼び、ユーザースクリプトにベンチを回させる |
 | `status [--json]` | キューの中身と、最後にデプロイされたものを表示する |
 | `queue clear` | キューを空にする。キューが詰まったときの強制解除用 |
 | `init` | `isutori.toml` の雛形を書く |
 | `docs` | この README を表示する |
+| `help` | コマンドの一覧と使い方を表示する |
 | `userscript [MATCH_PATTERN...]` | ユーザースクリプトを書き出す |
 | `mock-portal` | 偽ポータルを起動する |
 
 `bench` の REF は既定で `HEAD` です。サーバーが取りに行けるよう、先に origin へ push しておきます。`guard` は、デプロイ手段の冒頭で呼びます。
+
+`bench --mode final` は、競技の終わりに最終計測へ向けた状態をデプロイするときに使います。フックには `ISUTORI_MODE=final` が渡るので、デプロイ手段の中でログの出力やプロファイラを止めてください。ふだんの測定は、既定の `measure` で回します。
 
 `bench` は進行状況を stderr に、実行結果をまとめた JSON を stdout に出します。終了コードは、ベンチが pass なら 0、途中でエラーなら 1、ベンチが fail なら 2 です。エージェントに使わせるときは、バックグラウンドで起動して待ち時間に別の作業をさせてください。
 
@@ -123,6 +138,13 @@ isutori は、`ops.ref` から取り出したディレクトリを作業ディ�
 `isutori userscript 'https://portal.example.com/*' > isutori.user.js` で書き出し、Tampermonkey に入れます。
 
 当日書き換えるのは、ポータルの画面に依存する先頭の `adapter` だけです。書き換えるときの決まりと、ベンチを回さずに確かめる方法は、スクリプト内のコメントにあります。同梱の実装は偽ポータル向けです。書き換えたものは競技リポジトリに保存し、全員で同じものを使ってください。
+
+## うまくいかないとき
+
+- `isutori bench` が失敗したら、その実行の `run.log` で、どのステップで何が出力されたかを確かめます。場所は、stdout に出る JSON の `run_dir` にあります
+- `isutori.toml` やフックを変えたのに反映されないときは、`ops.ref` のブランチへ push したかを確かめます
+- 順番が回ってこないときは、`isutori status` で先頭のチケットを確かめます。持ち主の isutori が止まっていれば、リースが切れた時点でチケットは自動で消えます
+- それでもキューが詰まったままなら、チームに知らせてから `isutori queue clear` で空にします
 
 ## 偽ポータル
 
