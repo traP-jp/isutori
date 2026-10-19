@@ -16,10 +16,10 @@ go run github.com/traP-jp/isutori@latest status --json
 
 | コマンド | 内容 |
 |---|---|
-| `bench [--ref REF] [--mode measure\|final] [--requester NAME]` | REF (既定 `HEAD`、push 済みであること) をデプロイしてベンチを取る |
+| `bench [--ref REF] [--mode measure\|final] [--requester NAME]` | REF (既定 `HEAD`、push 済みであること) をデプロイしてベンチを回す |
 | `guard` | 自分のチケットがキューの先頭でなければ 0 以外で終了する。デプロイ手段の冒頭で呼ぶ |
 | `status [--json]` | キューの中身と、最後にデプロイされたものを表示する |
-| `queue clear` | キューを空にする。止まったチケットの強制解除用 |
+| `queue clear` | キューを空にする。キューが詰まったときの強制解除用 |
 | `init` | `isutori.toml` の雛形を書く |
 | `docs` | この README を表示する |
 | `userscript [MATCH_PATTERN...]` | ユーザースクリプトを書き出す |
@@ -71,7 +71,7 @@ go run github.com/traP-jp/isutori@latest status --json
 
 `isutori userscript 'https://portal.example.com/*' > isutori.user.js` で書き出し、Tampermonkey に入れます。
 
-当日書き換えるのは、ポータルの画面に依存する先頭の `adapter` だけです。満たすべき約束事と、ベンチを消費せずに確かめる方法は、スクリプト内のコメントにあります。同梱の実装は偽ポータル向けです。書き換えた版は競技リポジトリに保存し、全員で同じものを使ってください。
+当日書き換えるのは、ポータルの画面に依存する先頭の `adapter` だけです。満たすべき約束事と、ベンチを回さずに確かめる方法は、スクリプト内のコメントにあります。同梱の実装は偽ポータル向けです。書き換えた版は競技リポジトリに保存し、全員で同じものを使ってください。
 
 ## 偽ポータル
 
