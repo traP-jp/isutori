@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs three `isutori bench` concurrently against a dockerized s1 and checks
 # that their deploy..cleanup windows never overlap, then checks that Ctrl-C
-# still runs cleanup and frees the queue.
+# still runs cleanup, holding the queue until it ends.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -59,6 +59,10 @@ cat > ops/hook.sh <<EOF
 set -e
 ssh -F $work/ssh_config s1 "echo \$ISUTORI_TICKET_ID \$1 >> markers"
 sleep 1
+if [ "\$1" = cleanup ] && [ -n "\${CLEANUP_SLEEP:-}" ]; then
+  sleep "\$CLEANUP_SLEEP"
+  ssh -F $work/ssh_config s1 "echo \$ISUTORI_TICKET_ID cleaned >> markers"
+fi
 EOF
 chmod +x ops/hook.sh
 git add . && git commit -qm init && git push -q origin HEAD:main 2>/dev/null
@@ -98,17 +102,31 @@ ISUTORI_TICKET_ID=bogus ISUTORI_CONFIG="$work/repo/isutori.toml" isutori guard 2
   && { echo "guard passed for a ticket not in the queue"; fail=1; }
 grep -q 'now running main by' "$work/bob.log" "$work/carol.log" "$work/alice.log" || { echo "queue does not show branch names"; fail=1; }
 
-# Ctrl-C during bench: the poster is stopped so the run waits on the result.
+# Ctrl-C during bench, with a cleanup longer than lease_ttl and eve waiting:
+# eve must not deploy until dave's cleanup ends. The poster is stopped so that
+# dave waits on the result.
 kill $poster
 trap 'docker compose -f "$here/compose.yml" down' EXIT
 ssh -F "$work/ssh_config" s1 'rm -f markers'
-isutori bench --requester dave > "$work/dave.json" 2> "$work/dave.log" &
+CLEANUP_SLEEP=15 isutori bench --requester dave > "$work/dave.json" 2> "$work/dave.log" &
 dave=$!
 until grep -q '== bench' "$work/dave.log"; do sleep 0.2; done
+isutori bench --requester eve > "$work/eve.json" 2> "$work/eve.log" &
+eve=$!
+until grep -q 'waiting: 1 ahead' "$work/eve.log"; do sleep 0.2; done
 kill -INT $dave
+post_results &
+poster=$!
+trap 'kill $poster; docker compose -f "$here/compose.yml" down' EXIT
 status=0; wait $dave || status=$?
 [ "$status" = 1 ] || { echo "interrupted bench exited with $status, want 1"; fail=1; }
-ssh -F "$work/ssh_config" s1 cat markers | grep -q cleanup || { echo "cleanup did not run after SIGINT"; fail=1; }
+wait $eve || { echo "eve's bench exited with $?"; fail=1; }
+ssh -F "$work/ssh_config" s1 cat markers > "$work/markers"
+awk '
+  $2 == "deploy" && ++deploys == 2 { eve = NR }
+  $2 == "cleaned" { cleaned = NR }
+  END { exit !(cleaned && eve && cleaned < eve) }
+' "$work/markers" || { echo "eve deployed before dave's cleanup ended"; cat "$work/markers"; fail=1; }
 [ "$(isutori status --json | grep -c '"id"')" = 0 ] || { echo "ticket left in queue after SIGINT"; fail=1; }
 
 if [ "$fail" = 0 ]; then echo "e2e: OK"; else echo "e2e: FAILED (logs in $work)"; fi

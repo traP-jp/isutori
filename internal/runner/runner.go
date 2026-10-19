@@ -161,16 +161,20 @@ func (r *run) execute(parent context.Context) error {
 	}
 	r.log.Printf("enqueued %s", name)
 	defer func() {
-		ctx, cancel := detached(parent)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Minute)
 		defer cancel()
 		if err := r.q.Remove(ctx, name); err != nil {
 			r.log.Printf("WARNING: failed to remove ticket %s; run `isutori queue clear` if it blocks others: %v", name, err)
 		}
 	}()
 
+	// The lease outlives Ctrl-C so that cleanup still holds the servers.
+	leaseCtx, loseLease := context.WithCancelCause(context.WithoutCancel(parent))
+	defer loseLease(nil)
+	go r.keepLease(leaseCtx, loseLease, name)
 	ctx, cancel := context.WithCancelCause(parent)
 	defer cancel(nil)
-	go r.keepLease(ctx, cancel, name)
+	defer context.AfterFunc(leaseCtx, func() { cancel(context.Cause(leaseCtx)) })()
 
 	if err := r.waitHead(ctx, name); err != nil {
 		return err
@@ -197,19 +201,11 @@ func (r *run) execute(parent context.Context) error {
 		}
 	}
 
-	if errors.Is(context.Cause(ctx), queue.ErrTicketLost) {
+	if errors.Is(context.Cause(leaseCtx), queue.ErrTicketLost) {
 		r.log.Print("WARNING: skipping cleanup because the servers may already belong to the next ticket")
 		return errors.Join(runErr, queue.ErrTicketLost)
 	}
-	// Cleanup gets its own context so that it still runs after Ctrl-C.
-	// keepLease holds the lease until execute returns.
-	cleanupCtx, cancelCleanup := detached(parent)
-	defer cancelCleanup()
-	return errors.Join(runErr, r.stage(cleanupCtx, "cleanup", r.hook(h.Cleanup)))
-}
-
-func detached(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
+	return errors.Join(runErr, r.stage(leaseCtx, "cleanup", r.hook(h.Cleanup)))
 }
 
 func (r *run) keepLease(ctx context.Context, cancel context.CancelCauseFunc, name string) {
