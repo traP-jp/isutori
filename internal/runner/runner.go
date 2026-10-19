@@ -214,9 +214,8 @@ func (r *run) keepLease(ctx context.Context, cancel context.CancelCauseFunc, nam
 	ttl := r.cfg.Queue.LeaseTTL
 	t := time.NewTicker(ttl / 4)
 	defer t.Stop()
-	// The queue host prunes the ticket once lease_ttl passes without a renewal,
-	// and an unreachable host cannot tell us. Give up well before that: the
-	// timer can fire up to ttl/4 late while a renewal blocks.
+	// An unreachable host cannot report the ticket as pruned, so stop well
+	// before lease_ttl; this timer may fire ttl/4 late while a renewal blocks.
 	lost := time.NewTimer(ttl / 2)
 	defer lost.Stop()
 	for {
