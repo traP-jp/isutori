@@ -203,6 +203,13 @@ func (r *run) execute(parent context.Context) error {
 		}
 	}
 
+	// A stage may have failed because the ticket is gone, e.g. guard in deploy;
+	// find out now rather than at the next renewal.
+	renewCtx, cancelRenew := context.WithTimeout(leaseCtx, r.cfg.Queue.LeaseTTL/4)
+	if err := r.q.Renew(renewCtx, name); errors.Is(err, queue.ErrTicketLost) {
+		loseLease(err)
+	}
+	cancelRenew()
 	if cause := context.Cause(leaseCtx); leaseLost(cause) {
 		r.log.Print("WARNING: skipping cleanup because the servers may already belong to the next ticket")
 		return errors.Join(runErr, cause)
