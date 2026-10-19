@@ -7,20 +7,12 @@ argument-hint: "[portal-url]"
 
 # isutori を競技リポジトリに組み込む
 
-isutori の仕様 (コマンド、測定の流れ、段階コマンドとの約束事、環境変数、終了コード) は、この SKILL.md から見て `../../README.md` にある。作業の前に読むこと。
-
 isutori が持つのはキューと、測定枠の中の進行だけである。デプロイ手段 (ansible、Makefile、シェルなど) や集計スクリプトの中身は作らない。段階に結び付けるものが競技リポジトリに無ければ、作業を止めて利用者に伝える。
 
 次の操作は、実行する前に利用者の承認を得る。
 
 - `git push` (段階コマンドと `isutori.toml` は origin の `ops.ref` から読まれるため、反映には push が要る)
 - `isutori bench` (ベンチを 1 回消費する)
-
-## 現状を確かめる
-
-- 競技リポジトリに `origin` があり、push できること
-- `ssh s1 true` のように、各サーバーへ SSH の別名で入れること。キューを置くホスト (通常 s1) の別名を控える
-- 既存のデプロイ手段と集計スクリプトを読み、`deploy` / `health` / `prepare` / `collect` / `analyze` / `publish` / `cleanup` のどれに当たるかを対応づける
 
 ## isutori を入れる
 
@@ -31,6 +23,14 @@ mise use --pin go:github.com/traP-jp/isutori@latest
 ```
 
 mise が使えない場合は、`go run github.com/traP-jp/isutori@<コミット>` を Makefile などで包み、版を固定する。
+
+入れたら、以降の作業に進む前に `isutori docs` で仕様 (コマンド、測定の流れ、段階コマンドとの約束事、環境変数、終了コード) を読む。
+
+## 現状を確かめる
+
+- 競技リポジトリに `origin` があり、push できること
+- `ssh s1 true` のように、各サーバーへ SSH の別名で入れること。キューを置くホスト (通常 s1) の別名を控える
+- 既存のデプロイ手段と集計スクリプトを読み、`deploy` / `health` / `prepare` / `collect` / `analyze` / `publish` / `cleanup` のどれに当たるかを対応づける
 
 ## isutori.toml を書く
 

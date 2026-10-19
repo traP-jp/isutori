@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -31,12 +32,16 @@ const usage = `usage:
   isutori queue clear
   isutori init
   isutori userscript [MATCH_PATTERN...]
+  isutori docs
   isutori mock-portal [--listen ADDR] [--pending D] [--running D] [--outcome pass|fail|error] [--score N]
 
 exit codes of bench: 0 benchmark passed, 1 error, 2 benchmark failed
 `
 
 const exitBenchFailed = 2
+
+//go:embed README.md
+var readme string
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -67,6 +72,9 @@ func dispatch(ctx context.Context, args []string) (int, error) {
 		return exitCode(clearQueue(ctx))
 	case "init":
 		return exitCode(initRepo(ctx))
+	case "docs":
+		_, err := os.Stdout.WriteString(readme)
+		return exitCode(err)
 	case "userscript":
 		return exitCode(printUserscript(rest))
 	case "mock-portal":

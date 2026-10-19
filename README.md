@@ -21,6 +21,7 @@ go run github.com/traP-jp/isutori@latest status --json
 | `status [--json]` | キューの中身と、最後にデプロイされたものを表示する |
 | `queue clear` | キューを空にする。止まったチケットの強制解除用 |
 | `init` | `isutori.toml` の雛形を書く |
+| `docs` | この README を表示する |
 | `userscript [MATCH_PATTERN...]` | ユーザースクリプトを書き出す |
 | `mock-portal` | 偽ポータルを起動する |
 
