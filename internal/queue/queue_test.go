@@ -3,8 +3,10 @@ package queue
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -89,4 +91,55 @@ func TestRunReturnsWhenAChildHoldsThePipes(t *testing.T) {
 	if err == nil || time.Since(start) > 10*time.Second {
 		t.Fatalf("got %v after %v", err, time.Since(start))
 	}
+}
+
+func TestOrderSurvivesClockSteppingBack(t *testing.T) {
+	bin := t.TempDir()
+	fake := "#!/bin/sh\nf=" + filepath.Join(bin, "now") + "\nn=$(cat \"$f\" 2>/dev/null || echo 900)\necho $((n - 1)) > \"$f\"\necho \"$n\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "date"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx := context.Background()
+	q, _ := newQueue(t)
+	for _, id := range []string{"first", "second", "third"} {
+		if _, err := q.Enqueue(ctx, Ticket{ID: id, Requester: "r"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := queuedIDs(t, q); got != "first,second,third" {
+		t.Fatalf("queue order %s, want arrival order", got)
+	}
+}
+
+func TestOrderWithTicketsFromClockNamingVersions(t *testing.T) {
+	ctx := context.Background()
+	q, home := newQueue(t)
+	if _, err := q.Enqueue(ctx, Ticket{ID: "new1", Requester: "r"}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	old := fmt.Sprintf("%d-r-old.json", time.Now().UnixNano())
+	if err := os.WriteFile(filepath.Join(home, ".isutori/queue", old), []byte(`{"id":"old"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.Enqueue(ctx, Ticket{ID: "new2", Requester: "r"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := queuedIDs(t, q); got != "new1,old,new2" {
+		t.Fatalf("queue order %s, want arrival order", got)
+	}
+}
+
+func queuedIDs(t *testing.T, q *Queue) string {
+	entries, err := q.List(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, e := range entries {
+		ids = append(ids, e.Ticket.ID)
+	}
+	return strings.Join(ids, ",")
 }

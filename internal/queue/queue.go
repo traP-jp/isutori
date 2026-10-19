@@ -34,9 +34,9 @@ type Entry struct {
 }
 
 // Queue keeps one file per ticket under Dir/queue on the queue host.
-// File names start with the host's clock in nanoseconds, so lexical order is
-// arrival order regardless of clock skew between clients. A ticket's mtime is
-// its lease; clients touch it periodically.
+// File names start with a counter kept on the host, so lexical order is
+// arrival order even if a clock steps back. A ticket's mtime is its lease;
+// clients touch it periodically.
 type Queue struct {
 	Shell Shell
 	Dir   string
@@ -57,7 +57,15 @@ func (q *Queue) Enqueue(ctx context.Context, t Ticket) (string, error) {
 		return "", err
 	}
 	suffix := unsafeName.ReplaceAllString(t.Requester, "_") + "-" + t.ID + ".json"
-	script := q.prelude() + fmt.Sprintf(`n="$(date +%%s%%N)-"%s
+	// One past the larger of the counter and the clock never goes back, and
+	// keeps pace with tickets that earlier versions named by the clock.
+	script := q.prelude() + fmt.Sprintf(`s=$(cat "$D/seq" 2>/dev/null) || true
+now=$(date +%%s%%N)
+if [ "$now" -gt "${s:-0}" ]; then s=$now; fi
+s=$((s + 1))
+echo "$s" > "$D/seq.tmp"
+mv "$D/seq.tmp" "$D/seq"
+n="$s-"%s
 cat > "$Q/.$n.tmp"
 mv "$Q/.$n.tmp" "$Q/$n"
 printf %%s "$n"
