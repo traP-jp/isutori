@@ -29,9 +29,9 @@ var manualTmpl = template.Must(template.New("manual").Parse(manualHTML))
 
 // Wait serves the result endpoint on ln until a result for runID arrives, then
 // closes ln.
-func Wait(ctx context.Context, ln net.Listener, runID, target string) (Result, error) {
+func Wait(ctx context.Context, ln net.Listener, runID string) (Result, error) {
 	results := make(chan Result, 1)
-	srv := &http.Server{Handler: handler(runID, target, results), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Handler: handler(runID, results), ReadHeaderTimeout: 10 * time.Second}
 	go srv.Serve(ln)
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -47,10 +47,10 @@ func Wait(ctx context.Context, ln net.Listener, runID, target string) (Result, e
 	}
 }
 
-func handler(runID, target string, results chan<- Result) http.Handler {
+func handler(runID string, results chan<- Result) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		manualTmpl.Execute(w, map[string]string{"RunID": runID, "Target": target})
+		manualTmpl.Execute(w, map[string]string{"RunID": runID})
 	})
 	mux.HandleFunc("GET /api/run", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"run_id": runID})

@@ -190,13 +190,17 @@ func (r *run) execute(parent, abort context.Context) error {
 	}
 
 	h := r.cfg.Hooks
+	state := "healthy"
+	if h.Health == "" {
+		state = "deployed"
+	}
 	steps := []struct {
 		name string
 		fn   func(context.Context) error
 	}{
 		{"deploy", r.deploy},
 		{"health", r.hook(h.Health)},
-		{"record", r.recordDeployed(deployedState(h.Health))},
+		{"record", r.recordDeployed(state)},
 		{"prepare", r.hook(h.Prepare)},
 		{"bench", r.bench},
 		{"collect", r.hook(h.Collect)},
@@ -220,7 +224,7 @@ func (r *run) execute(parent, abort context.Context) error {
 	switch cause := context.Cause(leaseCtx); {
 	case errors.Is(cause, errAborted):
 		return errors.Join(runErr, cause)
-	case leaseLost(cause):
+	case errors.Is(cause, queue.ErrTicketLost), errors.Is(cause, errLeaseUnconfirmed):
 		r.log.Print("WARNING: skipping cleanup because the servers may already belong to the next ticket")
 		return errors.Join(runErr, cause)
 	}
@@ -230,10 +234,6 @@ func (r *run) execute(parent, abort context.Context) error {
 // errLeaseUnconfirmed means the queue host could not be reached for long
 // enough that it may have pruned the ticket.
 var errLeaseUnconfirmed = errors.New("lease renewals kept failing; the queue host may have handed the servers to the next ticket")
-
-func leaseLost(err error) bool {
-	return errors.Is(err, queue.ErrTicketLost) || errors.Is(err, errLeaseUnconfirmed)
-}
 
 func (r *run) keepLease(ctx context.Context, cancel context.CancelCauseFunc, name string) {
 	ttl := r.cfg.Queue.LeaseTTL
@@ -367,13 +367,6 @@ func (r *run) deploy(ctx context.Context) error {
 	return r.hook(r.cfg.Hooks.Deploy)(ctx)
 }
 
-func deployedState(healthHook string) string {
-	if healthHook == "" {
-		return "deployed"
-	}
-	return "healthy"
-}
-
 func (r *run) recordDeployed(state string) func(context.Context) error {
 	return func(ctx context.Context) error {
 		t := r.summary.Ticket
@@ -412,7 +405,7 @@ func (r *run) bench(ctx context.Context) error {
 			r.log.Printf("WARNING: %v; open the URL above yourself", err)
 		}
 	}
-	res, err := receiver.Wait(ctx, ln, r.summary.RunID, b.Target)
+	res, err := receiver.Wait(ctx, ln, r.summary.RunID)
 	if err != nil {
 		return err
 	}

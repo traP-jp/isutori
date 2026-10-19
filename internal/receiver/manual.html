@@ -13,7 +13,6 @@ textarea { width: 100%; height: 16rem; }
 <h1>ベンチ結果の手動入力</h1>
 <p>run: <code>{{.RunID}}</code></p>
 <p>ポータルでベンチを Enqueue し、終わったら結果をここに入力してください。</p>
-{{if .Target}}<p>対象サーバー: <code>{{.Target}}</code> (最終計測にも最後に選んだサーバーが使われることがあるので、必ずこれを選んでください)</p>{{end}}
 <form id="f">
 <label><input type="checkbox" name="passed"> Passed</label>
 <label>Score <input type="number" name="score" value="0" required></label>
