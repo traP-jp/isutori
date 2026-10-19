@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -185,7 +186,8 @@ func (r *run) execute(parent context.Context) error {
 		name string
 		fn   func(context.Context) error
 	}{
-		{"deploy", r.deploy},
+		{"record", r.recordDeployed("deploying")},
+		{"deploy", r.hook(h.Deploy)},
 		{"health", r.hook(h.Health)},
 		{"record", r.recordDeployed("healthy")},
 		{"prepare", r.hook(h.Prepare)},
@@ -307,15 +309,6 @@ func (r *run) hook(cmdline string) func(context.Context) error {
 	}
 }
 
-// deploy records the deploy before starting it, so that a deploy that fails
-// halfway still shows up in `isutori status`.
-func (r *run) deploy(ctx context.Context) error {
-	if err := r.recordDeployed("deploying")(ctx); err != nil {
-		return err
-	}
-	return r.hook(r.cfg.Hooks.Deploy)(ctx)
-}
-
 func (r *run) recordDeployed(state string) func(context.Context) error {
 	return func(ctx context.Context) error {
 		t := r.summary.Ticket
@@ -342,9 +335,9 @@ func (r *run) bench(ctx context.Context) error {
 	defer cancel()
 
 	b := r.cfg.Bench
-	ln, err := receiver.Listen(b.Listen)
+	ln, err := net.Listen("tcp", b.Listen)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w (another isutori bench may be running on this machine)", err)
 	}
 	r.log.Printf("manual input: http://%s/", b.Listen)
 	if b.Method == config.MethodUserscript {

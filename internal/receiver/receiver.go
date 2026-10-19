@@ -27,14 +27,6 @@ var manualHTML string
 
 var manualTmpl = template.Must(template.New("manual").Parse(manualHTML))
 
-func Listen(addr string) (net.Listener, error) {
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return nil, fmt.Errorf("listen %s (another isutori bench may be running on this machine): %w", addr, err)
-	}
-	return ln, nil
-}
-
 // Wait serves the result endpoint on ln until a result for runID arrives, then
 // closes ln.
 func Wait(ctx context.Context, ln net.Listener, runID string) (Result, error) {
