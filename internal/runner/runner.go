@@ -231,15 +231,12 @@ func (r *run) execute(parent, abort context.Context) error {
 	return errors.Join(runErr, r.stage(leaseCtx, "cleanup", r.hook(h.Cleanup)))
 }
 
-// errLeaseUnconfirmed means the queue host could not be reached for long
-// enough that it may have pruned the ticket.
 var errLeaseUnconfirmed = errors.New("lease renewals kept failing; the queue host may have handed the servers to the next ticket")
 
 func (r *run) keepLease(ctx context.Context, cancel context.CancelCauseFunc, name string) {
 	ttl := r.cfg.Queue.LeaseTTL
-	// The host prunes the ticket lease_ttl after the last renewal, which an
-	// unreachable host cannot report, so give up a quarter earlier. A timer of
-	// its own keeps a renewal that never returns from delaying this.
+	// Stop a quarter before the host may prune the ticket, on a timer of its
+	// own so that a renewal that never returns cannot delay it.
 	giveUp := ttl * 3 / 4
 	deadline := time.AfterFunc(giveUp, func() {
 		r.log.Printf("ERROR: %v", errLeaseUnconfirmed)
