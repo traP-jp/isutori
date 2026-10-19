@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs three `isutori bench` concurrently against a dockerized s1 and checks
 # that their deploy..cleanup windows never overlap, then checks that Ctrl-C
-# still runs cleanup, holding the queue until it ends.
+# still runs cleanup, holding the queue until it ends, and that a failed
+# benchmark exits with 2.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -69,10 +70,11 @@ git add . && git commit -qm init && git push -q origin HEAD:main 2>/dev/null
 git fetch -q origin
 
 post_results() {
+  local passed=${1:-true}
   while :; do
     id=$(curl -sf http://127.0.0.1:17878/api/run | sed -n 's/.*"run_id":"\([^"]*\)".*/\1/p') || true
     [ -n "$id" ] && curl -sf -H 'Content-Type: application/json' \
-      -d "{\"run_id\":\"$id\",\"passed\":true,\"score\":123,\"message\":\"ok\"}" \
+      -d "{\"run_id\":\"$id\",\"passed\":$passed,\"score\":123,\"message\":\"ok\"}" \
       http://127.0.0.1:17878/api/result || true
     sleep 0.3
   done
@@ -128,6 +130,12 @@ awk '
   END { exit !(cleaned && eve && cleaned < eve) }
 ' "$work/markers" || { echo "eve deployed before dave's cleanup ended"; cat "$work/markers"; fail=1; }
 [ "$(isutori status --json | grep -c '"id"')" = 0 ] || { echo "ticket left in queue after SIGINT"; fail=1; }
+
+kill $poster
+post_results false &
+poster=$!
+status=0; isutori bench --requester frank > "$work/frank.json" 2> "$work/frank.log" || status=$?
+[ "$status" = 2 ] || { echo "failed bench exited with $status, want 2"; fail=1; }
 
 if [ "$fail" = 0 ]; then echo "e2e: OK"; else echo "e2e: FAILED (logs in $work)"; fi
 exit $fail
