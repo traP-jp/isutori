@@ -88,3 +88,28 @@ func TestHookKillsWhatIgnoresSIGTERM(t *testing.T) {
 		t.Fatal("a child that ignored SIGTERM survived the hook")
 	}
 }
+
+func TestReadBenchResult(t *testing.T) {
+	path := filepath.Join(t.TempDir(), benchResultFile)
+	if _, err := readBenchResult(path); err == nil {
+		t.Error("a missing result was accepted")
+	}
+	for body, wantErr := range map[string]bool{
+		`{"passed":true,"score":42,"message":"ok"}`: false,
+		`{"passed":false}`:                          false,
+		`{"pass":true,"score":42}`:                  true,
+		`{"score":42}`:                              true,
+		`not json`:                                  true,
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		res, err := readBenchResult(path)
+		if (err != nil) != wantErr {
+			t.Errorf("%s: got error %v, want error %v", body, err, wantErr)
+		}
+		if body == `{"passed":true,"score":42,"message":"ok"}` && *res != (BenchResult{true, 42, "ok"}) {
+			t.Errorf("%s: got %+v", body, *res)
+		}
+	}
+}

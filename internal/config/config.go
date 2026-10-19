@@ -15,7 +15,6 @@ type Config struct {
 	Queue Queue `toml:"queue"`
 	Ops   Ops   `toml:"ops"`
 	Hooks Hooks `toml:"hooks"`
-	Bench Bench `toml:"bench"`
 }
 
 type Queue struct {
@@ -30,36 +29,23 @@ type Ops struct {
 }
 
 type Hooks struct {
-	Timeout time.Duration `toml:"timeout"`
-	Deploy  string        `toml:"deploy"`
-	Health  string        `toml:"health"`
-	Prepare string        `toml:"prepare"`
-	Collect string        `toml:"collect"`
-	Analyze string        `toml:"analyze"`
-	Publish string        `toml:"publish"`
-	Cleanup string        `toml:"cleanup"`
-}
-
-const (
-	MethodUserscript = "userscript"
-	MethodManual     = "manual"
-)
-
-type Bench struct {
-	Method      string        `toml:"method"`
-	PortalURL   string        `toml:"portal_url"`
-	Target      string        `toml:"target"`
-	Listen      string        `toml:"listen"`
-	Timeout     time.Duration `toml:"timeout"`
-	OpenCommand string        `toml:"open_command"`
+	Timeout      time.Duration `toml:"timeout"`
+	BenchTimeout time.Duration `toml:"bench_timeout"`
+	Deploy       string        `toml:"deploy"`
+	Health       string        `toml:"health"`
+	Prepare      string        `toml:"prepare"`
+	Bench        string        `toml:"bench"`
+	Collect      string        `toml:"collect"`
+	Analyze      string        `toml:"analyze"`
+	Publish      string        `toml:"publish"`
+	Cleanup      string        `toml:"cleanup"`
 }
 
 func Load(path string) (*Config, error) {
 	c := &Config{
 		Queue: Queue{Dir: ".isutori", LeaseTTL: 120 * time.Second, SSHCommand: "ssh"},
 		Ops:   Ops{Ref: "origin/main"},
-		Hooks: Hooks{Timeout: 10 * time.Minute},
-		Bench: Bench{Method: MethodManual, Listen: "127.0.0.1:7878", Timeout: 15 * time.Minute},
+		Hooks: Hooks{Timeout: 10 * time.Minute, BenchTimeout: 20 * time.Minute},
 	}
 	md, err := toml.DecodeFile(path, c)
 	if err != nil {
@@ -69,7 +55,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("load %s: unknown keys %v", path, keys)
 	}
 	// The decoder reads an integer duration as nanoseconds.
-	for _, key := range []string{"queue.lease_ttl", "hooks.timeout", "bench.timeout"} {
+	for _, key := range []string{"queue.lease_ttl", "hooks.timeout", "hooks.bench_timeout"} {
 		if md.Type(strings.Split(key, ".")...) == "Integer" {
 			return nil, fmt.Errorf("load %s: %s must be a string such as \"10m\"", path, key)
 		}
@@ -88,23 +74,14 @@ func (c *Config) validate() error {
 	if c.Queue.LeaseTTL < 10*time.Second {
 		errs = append(errs, "queue.lease_ttl must be at least 10s")
 	}
-	if c.Hooks.Timeout <= 0 {
-		errs = append(errs, "hooks.timeout must be positive")
+	if c.Hooks.Timeout <= 0 || c.Hooks.BenchTimeout <= 0 {
+		errs = append(errs, "hooks.timeout and hooks.bench_timeout must be positive")
 	}
 	if c.Hooks.Deploy == "" {
 		errs = append(errs, "hooks.deploy is required")
 	}
-	switch c.Bench.Method {
-	case MethodManual:
-	case MethodUserscript:
-		if c.Bench.PortalURL == "" {
-			errs = append(errs, "bench.portal_url is required when bench.method = \"userscript\"")
-		}
-		if c.Bench.Target == "" {
-			errs = append(errs, "bench.target is required when bench.method = \"userscript\"")
-		}
-	default:
-		errs = append(errs, fmt.Sprintf("bench.method must be %q or %q, got %q", MethodUserscript, MethodManual, c.Bench.Method))
+	if c.Hooks.Bench == "" {
+		errs = append(errs, "hooks.bench is required")
 	}
 	if len(errs) > 0 {
 		return errors.New(strings.Join(errs, "; "))
@@ -123,20 +100,14 @@ ref = "origin/main"   # 段階コマンドと isutori.toml はこの ref から�
 
 # 段階コマンドは sh -c で実行する。0 以外で終了したら cleanup へ進む
 [hooks]
-# timeout = "10m"           # 段階コマンド 1 つあたりの上限
+# timeout = "10m"           # bench 以外の段階コマンド 1 つあたりの上限
+# bench_timeout = "20m"     # bench の上限。ポータルの順番待ちも含む
 deploy  = "ops/deploy.sh"   # 冒頭で isutori guard を呼ぶこと
 health  = "ops/health.sh"
 prepare = "ops/prepare.sh"
+bench   = "isutori receive" # 結果を $ISUTORI_BENCH_RESULT に書く。ユーザースクリプトを使うなら "isutori autobench <ポータルの URL> <対象サーバー>"
 collect = "ops/collect.sh"
 analyze = "ops/analyze.sh"
 publish = "ops/publish.sh"
 cleanup = "ops/cleanup.sh"  # deploy に進んだ回は、失敗や中断があっても呼ばれる (リースが切れた場合を除く)
-
-[bench]
-method = "manual"     # userscript | manual
-# portal_url = "https://portal.example.com/"
-# target = "1"        # ベンチ対象のサーバー。ポータルの選択肢にある番号か IP で書く
-# listen = "127.0.0.1:7878"
-# timeout = "15m"
-# open_command = "wslview"
 `

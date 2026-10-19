@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -8,8 +9,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,7 +18,6 @@ import (
 
 	"github.com/traP-jp/isutori/internal/config"
 	"github.com/traP-jp/isutori/internal/queue"
-	"github.com/traP-jp/isutori/internal/receiver"
 )
 
 const (
@@ -44,13 +42,13 @@ type Stage struct {
 }
 
 type Summary struct {
-	RunID     string           `json:"run_id"`
-	RunDir    string           `json:"run_dir"`
-	Ticket    queue.Ticket     `json:"ticket"`
-	OpsCommit string           `json:"ops_commit"`
-	Bench     *receiver.Result `json:"bench,omitempty"`
-	Stages    []Stage          `json:"stages"`
-	Error     string           `json:"error,omitempty"`
+	RunID     string       `json:"run_id"`
+	RunDir    string       `json:"run_dir"`
+	Ticket    queue.Ticket `json:"ticket"`
+	OpsCommit string       `json:"ops_commit"`
+	Bench     *BenchResult `json:"bench,omitempty"`
+	Stages    []Stage      `json:"stages"`
+	Error     string       `json:"error,omitempty"`
 }
 
 type run struct {
@@ -125,6 +123,7 @@ func Run(ctx context.Context, opts Options) (*Summary, error) {
 			"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 			"ISUTORI_RUN_ID="+runID,
 			"ISUTORI_RUN_DIR="+runDir,
+			"ISUTORI_BENCH_RESULT="+filepath.Join(runDir, benchResultFile),
 			"ISUTORI_REPO="+root,
 			"ISUTORI_CONFIG="+cfgPath,
 			"ISUTORI_APP_COMMIT="+appCommit,
@@ -320,39 +319,42 @@ func (r *run) stage(ctx context.Context, name string, fn func(context.Context) e
 
 func (r *run) hook(cmdline string) func(context.Context) error {
 	return func(ctx context.Context) error {
-		if cmdline == "" {
-			r.log.Print("(no hook configured)")
-			return nil
-		}
-		timeout := r.cfg.Hooks.Timeout
-		ctx, cancel := context.WithTimeoutCause(ctx, timeout, fmt.Errorf("exceeded hooks.timeout (%v)", timeout))
-		defer cancel()
-		cmd := exec.CommandContext(ctx, "sh", "-c", cmdline)
-		cmd.Dir = r.opsDir
-		cmd.Env = r.env
-		cmd.Stdout = r.out
-		cmd.Stderr = r.out
-		// Signal the whole process group so that ansible, ssh and the like
-		// spawned by the hook do not outlive it.
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		cmd.Cancel = func() error {
-			sig := syscall.SIGTERM
-			if errors.Is(context.Cause(ctx), errAborted) {
-				sig = syscall.SIGKILL
-			}
-			return syscall.Kill(-cmd.Process.Pid, sig)
-		}
-		cmd.WaitDelay = 10 * time.Second
-		err := cmd.Run()
-		if ctx.Err() != nil && cmd.Process != nil {
-			// The group may ignore Cancel's SIGTERM, and WaitDelay kills only the shell.
-			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
-		if err != nil {
-			return errors.Join(err, context.Cause(ctx))
-		}
+		return r.sh(ctx, cmdline, "hooks.timeout", r.cfg.Hooks.Timeout)
+	}
+}
+
+func (r *run) sh(ctx context.Context, cmdline, timeoutKey string, timeout time.Duration) error {
+	if cmdline == "" {
+		r.log.Print("(no hook configured)")
 		return nil
 	}
+	ctx, cancel := context.WithTimeoutCause(ctx, timeout, fmt.Errorf("exceeded %s (%v)", timeoutKey, timeout))
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", cmdline)
+	cmd.Dir = r.opsDir
+	cmd.Env = r.env
+	cmd.Stdout = r.out
+	cmd.Stderr = r.out
+	// Signal the whole process group so that ansible, ssh and the like
+	// spawned by the hook do not outlive it.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		sig := syscall.SIGTERM
+		if errors.Is(context.Cause(ctx), errAborted) {
+			sig = syscall.SIGKILL
+		}
+		return syscall.Kill(-cmd.Process.Pid, sig)
+	}
+	cmd.WaitDelay = 10 * time.Second
+	err := cmd.Run()
+	if ctx.Err() != nil && cmd.Process != nil {
+		// The group may ignore Cancel's SIGTERM, and WaitDelay kills only the shell.
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	if err != nil {
+		return errors.Join(err, context.Cause(ctx))
+	}
+	return nil
 }
 
 // deploy records the deploy before starting it, so that a deploy that fails
@@ -386,35 +388,51 @@ func (r *run) recordDeployed(state string) func(context.Context) error {
 }
 
 func (r *run) bench(ctx context.Context) error {
-	ctx, cancel := context.WithTimeoutCause(ctx, r.cfg.Bench.Timeout, fmt.Errorf("no result within bench.timeout (%v)", r.cfg.Bench.Timeout))
-	defer cancel()
-
-	b := r.cfg.Bench
-	ln, err := net.Listen("tcp", b.Listen)
-	if err != nil {
-		return fmt.Errorf("%w (another isutori bench may be running on this machine)", err)
+	h := r.cfg.Hooks
+	if err := r.sh(ctx, h.Bench, "hooks.bench_timeout", h.BenchTimeout); err != nil {
+		return err
 	}
-	r.log.Printf("manual input: http://%s/", b.Listen)
-	if b.Method == config.MethodUserscript {
-		u := b.PortalURL + "#" + url.Values{"autobench": {r.summary.RunID}, "receiver": {"http://" + b.Listen}, "target": {b.Target}}.Encode()
-		r.log.Printf("opening %s", u)
-		if err := openBrowser(b.OpenCommand, u); err != nil {
-			r.log.Printf("WARNING: %v; open the URL above yourself", err)
-		}
-	}
-	res, err := receiver.Wait(ctx, ln, r.summary.RunID)
+	res, err := readBenchResult(filepath.Join(r.summary.RunDir, benchResultFile))
 	if err != nil {
 		return err
 	}
-	r.summary.Bench = &res
-	if err := writeJSON(filepath.Join(r.summary.RunDir, "bench.json"), res); err != nil {
-		return err
-	}
-	if res.Error != "" {
-		return fmt.Errorf("userscript: %s", res.Error)
-	}
+	r.summary.Bench = res
 	r.log.Printf("bench result: passed=%v score=%d", res.Passed, res.Score)
 	return nil
+}
+
+// BenchResult is what hooks.bench writes to $ISUTORI_BENCH_RESULT.
+type BenchResult struct {
+	Passed  bool   `json:"passed"`
+	Score   int64  `json:"score"`
+	Message string `json:"message"`
+}
+
+const benchResultFile = "bench.json"
+
+func readBenchResult(path string) (*BenchResult, error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, errors.New("hooks.bench exited without writing $ISUTORI_BENCH_RESULT")
+	}
+	if err != nil {
+		return nil, err
+	}
+	// A typo such as "pass" must not read as a failed benchmark.
+	var v struct {
+		BenchResult
+		Passed *bool `json:"passed"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&v); err != nil {
+		return nil, fmt.Errorf("$ISUTORI_BENCH_RESULT: %w", err)
+	}
+	if v.Passed == nil {
+		return nil, errors.New(`$ISUTORI_BENCH_RESULT: "passed" is missing`)
+	}
+	v.BenchResult.Passed = *v.Passed
+	return &v.BenchResult, nil
 }
 
 func (r *run) writeSummary() {
@@ -429,26 +447,6 @@ func writeJSON(path string, v any) error {
 		return err
 	}
 	return os.WriteFile(path, append(b, '\n'), 0o644)
-}
-
-func openBrowser(command, u string) error {
-	if command == "" {
-		for _, c := range []string{"wslview", "xdg-open", "open"} {
-			if _, err := exec.LookPath(c); err == nil {
-				command = c
-				break
-			}
-		}
-	}
-	if command == "" {
-		return errors.New("no browser opener found; set bench.open_command")
-	}
-	cmd := exec.Command(command, u)
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	go cmd.Wait()
-	return nil
 }
 
 // linkSelf makes `isutori` on PATH refer to this very binary inside hooks,

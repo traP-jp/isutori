@@ -35,6 +35,8 @@ go run github.com/traP-jp/isutori@latest status --json
 |---|---|
 | `bench [--ref REF] [--mode measure\|final] [--requester NAME]` | REF (既定 `HEAD`、push 済みであること) をデプロイしてベンチを回す |
 | `guard` | 自分のチケットがキューの先頭でなければ 0 以外で終了する。デプロイ手段の冒頭で呼ぶ |
+| `receive [--listen ADDR]` | `bench` の段階コマンドから呼び、手で入力された結果を受け取る |
+| `autobench [--listen ADDR] PORTAL_URL TARGET` | `bench` の段階コマンドから呼び、ユーザースクリプトにベンチを回させて結果を受け取る |
 | `status [--json]` | キューの中身と、最後にデプロイされたものを表示する |
 | `queue clear` | キューを空にする。キューが詰まったときの強制解除用 |
 | `init` | `isutori.toml` の雛形を書く |
@@ -57,7 +59,7 @@ Host s1
 
 1. REF が origin にあるか確かめ、`ops.ref` (既定 `origin/main`) を取り出す。`isutori.toml` と段階コマンドは、取り出したものを使う
 2. キューに並び、先頭になるまで待つ
-3. `deploy` → `health` → `prepare` → ベンチ → `collect` → `analyze` → `publish` の順に進む
+3. `deploy` → `health` → `prepare` → `bench` → `collect` → `analyze` → `publish` の順に進む
 4. `cleanup`。`deploy` に進んだ回は、途中で失敗しても Ctrl-C で止めても呼ぶ
 
 ただし、リースが切れていた回は、サーバーが次の人に渡っている可能性があるため `cleanup` を呼びません。リースの更新が `lease_ttl` の 4 分の 3 のあいだ一度も成功しなかった回も、リースが切れたものとみなして止めます。
@@ -68,7 +70,7 @@ Ctrl-C をもう一度押すと、実行中の段階コマンドを止め、`cle
 
 ## 段階コマンドとの約束事
 
-段階コマンドは `isutori.toml` の `[hooks]` に書き、`ops.ref` から取り出したディレクトリを作業ディレクトリにして、`sh -c` で実行します。0 以外で終了するか、`hooks.timeout` (既定 10 分) を超えると、残りを飛ばして `cleanup` へ進みます。未設定の段階は飛ばします (`deploy` は必須)。段階コマンドの中では `isutori guard` をそのまま呼べます。
+段階コマンドは `isutori.toml` の `[hooks]` に書き、`ops.ref` から取り出したディレクトリを作業ディレクトリにして、`sh -c` で実行します。0 以外で終了するか、`hooks.timeout` (既定 10 分) を超えると、残りを飛ばして `cleanup` へ進みます。`bench` の上限だけは、ポータルの順番待ちを含むため `hooks.bench_timeout` (既定 20 分) で別に決めます。未設定の段階は飛ばします (`deploy` と `bench` は必須)。段階コマンドの中では `isutori guard` をそのまま呼べます。
 
 段階コマンドには次の環境変数を渡します。
 
@@ -81,21 +83,27 @@ Ctrl-C をもう一度押すと、実行中の段階コマンドを止め、`cle
 | `ISUTORI_REQUESTER` / `ISUTORI_TICKET_ID` | 依頼者とチケット |
 | `ISUTORI_REPO` | 手元の競技リポジトリのルート |
 | `ISUTORI_CONFIG` | 使っている `isutori.toml` |
+| `ISUTORI_BENCH_RESULT` | `bench` の段階コマンドが結果を書くファイル |
 
 `$ISUTORI_RUN_DIR` には次のファイルができます。
 
 - `run.json`: チケット、各段階の所要時間、ベンチ結果。段階が終わるたびに更新されるので、`publish` から読めます
-- `bench.json`: ベンチ結果
+- `bench.json`: `bench` の段階コマンドが書いたベンチ結果
 - `run.log`: isutori と段階コマンドの出力
 
 ## ベンチ結果の受け取り
 
-受け取り方は `bench.method` で選びます。
+`bench` の段階コマンドはベンチを回し、結果を次の形で `$ISUTORI_BENCH_RESULT` に書きます。0 以外で終了したときや、結果を書かずに終了したときは、ベンチの fail ではなくエラー (終了コード 1) になります。
 
-- `manual`: `http://127.0.0.1:7878/` を開き、ポータルの結果をフォームに貼り付けて送信します
-- `userscript`: isutori がポータルをブラウザで開き、ユーザースクリプトが Enqueue して結果を送ります。ベンチの対象サーバーは `bench.target` に、ポータルの選択肢にある番号か IP で書きます。最後に選んだサーバーが最終計測にも使われるポータルがあるため、ユーザースクリプトは一致する選択肢が無いとき、別のサーバーで代用せずにエラーにします。ブラウザを開くコマンドは `bench.open_command` で指定でき、未指定なら `wslview`、`xdg-open`、`open` のうち最初に見つかったものを使います
+```json
+{"passed": true, "score": 12345, "message": "ポータルに表示された内容など"}
+```
 
-ユーザースクリプトが結果を得られなかったときは、`isutori bench` はベンチの fail ではなくエラー (終了コード 1) として終了します。
+`bench` には、ポータルに合わせて次のどれかを書きます。
+
+- `isutori receive`: `http://127.0.0.1:7878/` で待ち受けます。ポータルで Enqueue し、終わったら結果をこのページのフォームに入力してください
+- `isutori autobench <ポータルの URL> <対象サーバー>`: ポータルをブラウザで開き、ユーザースクリプトに Enqueue させて結果を受け取ります。待っている間も、上と同じフォームから手で入力できます。対象サーバーは、ポータルの選択肢にある番号か IP で書きます。最後に選んだサーバーが最終計測にも使われるポータルがあるため、ユーザースクリプトは一致する選択肢が無いとき、別のサーバーで代用せず、エラーを返します。ブラウザを開くコマンドは `--open-command` で指定でき、未指定なら `wslview`、`xdg-open`、`open` のうち最初に見つかったものを使います
+- 自作のスクリプト: ポータルにベンチを回す API などがあれば、それを呼んで結果を書きます
 
 ### ユーザースクリプト
 

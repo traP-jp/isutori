@@ -8,7 +8,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -21,6 +23,7 @@ import (
 	"github.com/traP-jp/isutori/internal/config"
 	"github.com/traP-jp/isutori/internal/mockportal"
 	"github.com/traP-jp/isutori/internal/queue"
+	"github.com/traP-jp/isutori/internal/receiver"
 	"github.com/traP-jp/isutori/internal/runner"
 	"github.com/traP-jp/isutori/internal/userscript"
 )
@@ -28,6 +31,8 @@ import (
 const usage = `usage:
   isutori bench [--ref REF] [--mode measure|final] [--requester NAME]
   isutori guard
+  isutori receive [--listen ADDR]
+  isutori autobench [--listen ADDR] [--open-command CMD] PORTAL_URL TARGET
   isutori status [--json]
   isutori queue clear
   isutori init
@@ -75,6 +80,10 @@ func dispatch(ctx, abort context.Context, args []string) (int, error) {
 		return bench(ctx, abort, rest)
 	case "guard":
 		return exitCode(guard(ctx))
+	case "receive":
+		return exitCode(receive(ctx, rest))
+	case "autobench":
+		return exitCode(autobench(ctx, rest))
 	case "status":
 		return exitCode(status(ctx, rest))
 	case "queue":
@@ -158,6 +167,87 @@ func guard(ctx context.Context) error {
 	if len(entries) == 0 || entries[0].Ticket.ID != ticket {
 		return fmt.Errorf("guard: ticket %s is not at the head of the queue", ticket)
 	}
+	return nil
+}
+
+const defaultListen = "127.0.0.1:7878"
+
+func receive(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("receive", flag.ContinueOnError)
+	listen := fs.String("listen", defaultListen, "address to receive the result on")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("usage: isutori receive [--listen ADDR]")
+	}
+	return awaitResult(ctx, *listen, func(string) {})
+}
+
+func autobench(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("autobench", flag.ContinueOnError)
+	listen := fs.String("listen", defaultListen, "address to receive the result on")
+	open := fs.String("open-command", "", "command that opens the portal; the first of wslview, xdg-open and open by default")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 2 {
+		return errors.New("usage: isutori autobench [--listen ADDR] [--open-command CMD] PORTAL_URL TARGET")
+	}
+	portal, target := fs.Arg(0), fs.Arg(1)
+	return awaitResult(ctx, *listen, func(runID string) {
+		u := portal + "#" + url.Values{"autobench": {runID}, "receiver": {"http://" + *listen}, "target": {target}}.Encode()
+		fmt.Fprintf(os.Stderr, "isutori: opening %s\n", u)
+		if err := openBrowser(*open, u); err != nil {
+			fmt.Fprintf(os.Stderr, "isutori: WARNING: %v; open the URL above yourself\n", err)
+		}
+	})
+}
+
+// awaitResult receives the result of the current run and writes it to
+// $ISUTORI_BENCH_RESULT. listening runs once the receiver is up.
+func awaitResult(ctx context.Context, listen string, listening func(runID string)) error {
+	runID, out := os.Getenv("ISUTORI_RUN_ID"), os.Getenv("ISUTORI_BENCH_RESULT")
+	if runID == "" || out == "" {
+		return errors.New("not running as hooks.bench of `isutori bench`")
+	}
+	ln, err := net.Listen("tcp", listen)
+	if err != nil {
+		return fmt.Errorf("%w (another isutori bench may be running on this machine)", err)
+	}
+	fmt.Fprintf(os.Stderr, "isutori: waiting for the result; enter it by hand at http://%s/ if needed\n", listen)
+	listening(runID)
+	res, err := receiver.Wait(ctx, ln, runID)
+	if err != nil {
+		return err
+	}
+	if res.Error != "" {
+		return fmt.Errorf("userscript: %s", res.Error)
+	}
+	b, err := json.Marshal(runner.BenchResult{Passed: res.Passed, Score: res.Score, Message: res.Message})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(out, b, 0o644)
+}
+
+func openBrowser(command, u string) error {
+	if command == "" {
+		for _, c := range []string{"wslview", "xdg-open", "open"} {
+			if _, err := exec.LookPath(c); err == nil {
+				command = c
+				break
+			}
+		}
+	}
+	if command == "" {
+		return errors.New("no browser opener found; pass --open-command")
+	}
+	cmd := exec.Command(command, u)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go cmd.Wait()
 	return nil
 }
 
