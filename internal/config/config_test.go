@@ -10,7 +10,7 @@ import (
 
 func load(t *testing.T, body string) (*Config, error) {
 	p := filepath.Join(t.TempDir(), FileName)
-	if err := os.WriteFile(p, []byte("[queue]\nhost = \"s1\"\n[hooks]\ndeploy = \"x\"\n"+body), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte("[queue]\nhost = \"s1\"\n[hooks]\ndeploy = \"x\"\nbench = \"x\"\n"+body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return Load(p)
