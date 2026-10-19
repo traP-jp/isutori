@@ -46,6 +46,11 @@ var readme string
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop()
+		fmt.Fprintln(os.Stderr, "isutori: interrupted; press Ctrl-C again to exit immediately")
+	}()
 	code, err := dispatch(ctx, os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "isutori:", err)
