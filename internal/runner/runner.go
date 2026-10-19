@@ -28,6 +28,8 @@ const (
 )
 
 type Options struct {
+	// Abort, once done, kills the running hook and skips cleanup.
+	Abort     context.Context
 	RepoRoot  string
 	Ref       string
 	Mode      string
@@ -147,7 +149,7 @@ func Run(ctx context.Context, opts Options) (*Summary, error) {
 			OpsCommit: opsCommit,
 		},
 	}
-	err = r.execute(ctx)
+	err = r.execute(ctx, opts.Abort)
 	if err != nil {
 		r.summary.Error = err.Error()
 	}
@@ -155,7 +157,9 @@ func Run(ctx context.Context, opts Options) (*Summary, error) {
 	return r.summary, err
 }
 
-func (r *run) execute(parent context.Context) error {
+var errAborted = errors.New("aborted by a second interrupt")
+
+func (r *run) execute(parent, abort context.Context) error {
 	name, err := r.q.Enqueue(parent, r.summary.Ticket)
 	if err != nil {
 		return err
@@ -176,6 +180,10 @@ func (r *run) execute(parent context.Context) error {
 	ctx, cancel := context.WithCancelCause(parent)
 	defer cancel(nil)
 	defer context.AfterFunc(leaseCtx, func() { cancel(context.Cause(leaseCtx)) })()
+	defer context.AfterFunc(abort, func() { loseLease(errAborted) })()
+	defer context.AfterFunc(parent, func() {
+		r.log.Print("interrupted; cleanup still runs unless you interrupt again")
+	})()
 
 	if err := r.waitHead(ctx, name); err != nil {
 		return err
@@ -210,7 +218,10 @@ func (r *run) execute(parent context.Context) error {
 		loseLease(err)
 	}
 	cancelRenew()
-	if cause := context.Cause(leaseCtx); leaseLost(cause) {
+	switch cause := context.Cause(leaseCtx); {
+	case errors.Is(cause, errAborted):
+		return errors.Join(runErr, cause)
+	case leaseLost(cause):
 		r.log.Print("WARNING: skipping cleanup because the servers may already belong to the next ticket")
 		return errors.Join(runErr, cause)
 	}
@@ -328,7 +339,13 @@ func (r *run) hook(cmdline string) func(context.Context) error {
 		// Signal the whole process group so that ansible, ssh and the like
 		// spawned by the hook do not outlive it.
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
+		cmd.Cancel = func() error {
+			sig := syscall.SIGTERM
+			if errors.Is(context.Cause(ctx), errAborted) {
+				sig = syscall.SIGKILL
+			}
+			return syscall.Kill(-cmd.Process.Pid, sig)
+		}
 		cmd.WaitDelay = 10 * time.Second
 		err := cmd.Run()
 		if ctx.Err() != nil && cmd.Process != nil {

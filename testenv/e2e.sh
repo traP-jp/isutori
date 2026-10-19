@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Runs three `isutori bench` concurrently against a dockerized s1 and checks
 # that their deploy..cleanup windows never overlap, then checks that Ctrl-C
-# still runs cleanup, holding the queue until it ends, and that a failed
-# benchmark exits with 2.
+# still runs cleanup, holding the queue until it ends, that a second Ctrl-C
+# kills cleanup and frees the queue at once, and that a failed benchmark
+# exits with 2.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -136,6 +137,22 @@ post_results false &
 poster=$!
 status=0; isutori bench --requester frank > "$work/frank.json" 2> "$work/frank.log" || status=$?
 [ "$status" = 2 ] || { echo "failed bench exited with $status, want 2"; fail=1; }
+
+# A second Ctrl-C kills a long cleanup at once and still frees the queue.
+kill $poster
+trap 'docker compose -f "$here/compose.yml" down' EXIT
+CLEANUP_SLEEP=60 isutori bench --requester gina > "$work/gina.json" 2> "$work/gina.log" &
+gina=$!
+until grep -q '== bench' "$work/gina.log"; do sleep 0.2; done
+kill -INT $gina
+until grep -q '== cleanup' "$work/gina.log"; do sleep 0.2; done
+sleep 2
+kill -INT $gina
+start=$SECONDS
+wait $gina || true
+[ $((SECONDS - start)) -lt 15 ] || { echo "second Ctrl-C took $((SECONDS - start))s to exit"; fail=1; }
+pgrep -fx 'sleep 60' > /dev/null && { echo "cleanup survived the second Ctrl-C"; pkill -fx 'sleep 60'; fail=1; }
+[ "$(isutori status --json | grep -c '"id"')" = 0 ] || { echo "ticket left in queue after a second Ctrl-C"; fail=1; }
 
 if [ "$fail" = 0 ]; then echo "e2e: OK"; else echo "e2e: FAILED (logs in $work)"; fi
 exit $fail

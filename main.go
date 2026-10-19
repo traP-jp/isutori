@@ -44,28 +44,35 @@ const exitBenchFailed = 2
 var readme string
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	// The first interrupt stops gracefully, the second abandons cleanup, and
+	// the third exits on the spot.
+	ctx, interrupt := context.WithCancel(context.Background())
+	abort, abortNow := context.WithCancel(context.Background())
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	go func() {
-		<-ctx.Done()
-		stop()
-		fmt.Fprintln(os.Stderr, "isutori: interrupted; press Ctrl-C again to exit immediately")
+		<-sigs
+		interrupt()
+		<-sigs
+		abortNow()
+		<-sigs
+		os.Exit(1)
 	}()
-	code, err := dispatch(ctx, os.Args[1:])
+	code, err := dispatch(ctx, abort, os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "isutori:", err)
 	}
 	os.Exit(code)
 }
 
-func dispatch(ctx context.Context, args []string) (int, error) {
+func dispatch(ctx, abort context.Context, args []string) (int, error) {
 	if len(args) == 0 {
 		fmt.Fprint(os.Stderr, usage)
 		return 1, nil
 	}
 	switch cmd, rest := args[0], args[1:]; cmd {
 	case "bench":
-		return bench(ctx, rest)
+		return bench(ctx, abort, rest)
 	case "guard":
 		return exitCode(guard(ctx))
 	case "status":
@@ -97,7 +104,7 @@ func exitCode(err error) (int, error) {
 	return 0, nil
 }
 
-func bench(ctx context.Context, args []string) (int, error) {
+func bench(ctx, abort context.Context, args []string) (int, error) {
 	fs := flag.NewFlagSet("bench", flag.ContinueOnError)
 	ref := fs.String("ref", "HEAD", "commit-ish to deploy; must be pushed to origin")
 	mode := fs.String("mode", runner.ModeMeasure, "measure or final")
@@ -113,6 +120,7 @@ func bench(ctx context.Context, args []string) (int, error) {
 		return 1, err
 	}
 	summary, err := runner.Run(ctx, runner.Options{
+		Abort:     abort,
 		RepoRoot:  root,
 		Ref:       *ref,
 		Mode:      *mode,
