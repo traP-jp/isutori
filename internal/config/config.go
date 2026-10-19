@@ -96,11 +96,11 @@ host = "s1"           # SSH の接続先。キューの状態はこのホスト�
 # ssh_command = "ssh"
 
 [ops]
-ref = "origin/main"   # 段階コマンドと isutori.toml はこの ref から取り出して使う
+ref = "origin/main"   # フックと isutori.toml はこの ref から取り出して使う
 
-# 段階コマンドは sh -c で実行する。0 以外で終了するか上限を超えたら cleanup へ進む
+# フックは sh -c で実行する。0 以外で終了するか上限を超えたら cleanup へ進む
 [hooks]
-# timeout = "10m"           # bench 以外の段階コマンド 1 つあたりの上限
+# timeout = "10m"           # bench 以外のフック 1 つあたりの上限
 # bench_timeout = "20m"     # bench の上限。ポータルの順番待ちも含む
 deploy  = "ops/deploy.sh"   # 冒頭で isutori guard を呼ぶこと
 health  = "ops/health.sh"
@@ -109,5 +109,5 @@ bench   = "isutori receive" # 結果を $ISUTORI_BENCH_RESULT に書く。ユー
 collect = "ops/collect.sh"
 analyze = "ops/analyze.sh"
 publish = "ops/publish.sh"
-cleanup = "ops/cleanup.sh"  # deploy に進んだ回は、失敗や中断があっても呼ばれる (リースが切れた場合を除く)
+cleanup = "ops/cleanup.sh"  # deploy に進んだ実行では、失敗や中断があっても呼ばれる (リースが切れた場合を除く)
 `
