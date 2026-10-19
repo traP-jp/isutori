@@ -1,5 +1,5 @@
 ---
-name: setup
+name: setup-isutori
 description: ISUCON の競技リポジトリに isutori (デプロイとベンチ実行のキュー) を組み込む。isutori.toml の作成、既存のデプロイ手段や集計スクリプトの段階コマンドへの結び付け、ユーザースクリプトのポータル対応、エージェント向けの運用ルールの追記、最初のベンチでの確認までを行う。
 disable-model-invocation: true
 argument-hint: "[portal-url]"
