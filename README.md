@@ -27,6 +27,15 @@ go run github.com/traP-jp/isutori@latest status --json
 
 `bench` は進行状況を stderr に、実行の要約 JSON を stdout に出します。終了コードは、ベンチが pass なら 0、途中でエラーなら 1、ベンチが fail なら 2 です。AI に使わせるときは、バックグラウンドで起動して待ち時間に別の作業をさせてください。
 
+順番を待つ間、isutori は 3 秒ごとに `queue.host` へ SSH で接続します。ベンチ中のサーバーに接続確立の負荷をかけないよう、`~/.ssh/config` で接続を使い回す設定にしておくことを勧めます。
+
+```
+Host s1
+  ControlMaster auto
+  ControlPath ~/.ssh/cm-%C
+  ControlPersist 60
+```
+
 ## 測定の流れ
 
 1. REF が origin にあるか確かめ、`ops.ref` (既定 `origin/main`) を取り出す。`isutori.toml` と段階コマンドは、取り出したものを使う
@@ -36,9 +45,13 @@ go run github.com/traP-jp/isutori@latest status --json
 
 ただし、リースが切れていた回は、サーバーが次の人に渡っている可能性があるため `cleanup` を呼びません。
 
+Ctrl-C をもう一度押すと、`cleanup` の終わりを待たずに終了します。
+
+`status` が表示するデプロイの記録には `state` があります。`deploy` を始める前に `deploying` として書き、`health` が通ると `healthy` に書き換えます。
+
 ## 段階コマンドとの約束事
 
-段階コマンドは `isutori.toml` の `[hooks]` に書き、`ops.ref` から取り出したディレクトリを作業ディレクトリにして、`sh -c` で実行します。0 以外で終了すると、残りを飛ばして `cleanup` へ進みます。未設定の段階は飛ばします (`deploy` は必須)。段階コマンドの中では `isutori guard` をそのまま呼べます。
+段階コマンドは `isutori.toml` の `[hooks]` に書き、`ops.ref` から取り出したディレクトリを作業ディレクトリにして、`sh -c` で実行します。0 以外で終了するか、`hooks.timeout` (既定 10 分) を超えると、残りを飛ばして `cleanup` へ進みます。未設定の段階は飛ばします (`deploy` は必須)。段階コマンドの中では `isutori guard` をそのまま呼べます。
 
 段階コマンドには次の環境変数を渡します。
 
