@@ -24,9 +24,9 @@ execFileSync("go", ["build", "-o", ".cache/isutori", ".."], { stdio: "inherit" }
 const userscript = execFileSync(".cache/isutori", ["userscript"], { encoding: "utf8" });
 
 const portals: ChildProcess[] = [];
-function startPortal(port: number, outcome: "pass" | "fail" | "error") {
+function startPortal(port: number, outcome: "pass" | "fail" | "error", running = "2s") {
   portals.push(
-    spawn(".cache/isutori", ["mock-portal", "--listen", `127.0.0.1:${port}`, "--pending", "1s", "--running", "2s", "--outcome", outcome], {
+    spawn(".cache/isutori", ["mock-portal", "--listen", `127.0.0.1:${port}`, "--pending", "1s", "--running", running, "--outcome", outcome], {
       stdio: "ignore",
     }),
   );
@@ -81,6 +81,8 @@ async function newPage(browser: Browser) {
 const pass = startPortal(17881, "pass");
 const fail = startPortal(17882, "fail");
 const error = startPortal(17883, "error");
+// Its jobs outlast the userscript's enqueue, so a job started by hand is still running.
+const slow = startPortal(17884, "pass", "60s");
 await new Promise((r) => setTimeout(r, 1000));
 const browser = await chromium.launch();
 try {
@@ -132,12 +134,12 @@ try {
   {
     // A job started by hand makes the portal refuse; this must surface as an error.
     const page = await newPage(browser);
-    await page.goto(`${pass}/contestant`);
+    await page.goto(`${slow}/contestant`);
     await page.locator("select").selectOption("1");
     await page.getByRole("button", { name: "Enqueue" }).click();
     await page.waitForURL(/benchmark_jobs\/\d+$/);
     const result = waitForResult("busy");
-    await page.goto(`${pass}/contestant#autobench=busy&receiver=${receiverURL}&target=1`);
+    await page.goto(`${slow}/contestant#autobench=busy&receiver=${receiverURL}&target=1`);
     const r = await result;
     assert.match(r.error ?? "", /^enqueue: portal refused to enqueue: .*no other concurrent job/);
   }
