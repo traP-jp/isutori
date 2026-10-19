@@ -124,7 +124,7 @@
     for (;;) {
       const v = fn();
       if (v) return v;
-      if (Date.now() > deadline) throw new Error(`timed out waiting for ${fn}`);
+      if (Date.now() > deadline) throw new Error(`timed out after ${timeoutMs / 1000}s`);
       await sleep(200);
     }
   }

@@ -301,8 +301,10 @@ func repoRoot(ctx context.Context) (string, error) {
 }
 
 func defaultRequester(ctx context.Context) string {
-	if out, err := exec.CommandContext(ctx, "git", "config", "user.name").Output(); err == nil && len(out) > 1 {
-		return strings.TrimSpace(string(out))
+	if out, err := exec.CommandContext(ctx, "git", "config", "user.name").Output(); err == nil {
+		if name := strings.TrimSpace(string(out)); name != "" {
+			return name
+		}
 	}
 	return os.Getenv("USER")
 }
