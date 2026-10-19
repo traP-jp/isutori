@@ -211,15 +211,27 @@ func (r *run) execute(parent context.Context) error {
 }
 
 func (r *run) keepLease(ctx context.Context, cancel context.CancelCauseFunc, name string) {
-	t := time.NewTicker(r.cfg.Queue.LeaseTTL / 4)
+	ttl := r.cfg.Queue.LeaseTTL
+	t := time.NewTicker(ttl / 4)
 	defer t.Stop()
+	// The queue host prunes the ticket once lease_ttl passes without a renewal,
+	// and an unreachable host cannot tell us. Give up well before that: the
+	// timer can fire up to ttl/4 late while a renewal blocks.
+	lost := time.NewTimer(ttl / 2)
+	defer lost.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-lost.C:
+			err := fmt.Errorf("%w: no successful lease renewal for %v", queue.ErrTicketLost, ttl/2)
+			r.log.Printf("ERROR: %v", err)
+			cancel(err)
+			return
 		case <-t.C:
 		}
-		renewCtx, cancelRenew := context.WithTimeout(ctx, r.cfg.Queue.LeaseTTL/4)
+		start := time.Now()
+		renewCtx, cancelRenew := context.WithTimeout(ctx, ttl/4)
 		err := r.q.Renew(renewCtx, name)
 		cancelRenew()
 		if ctx.Err() != nil {
@@ -232,6 +244,8 @@ func (r *run) keepLease(ctx context.Context, cancel context.CancelCauseFunc, nam
 			return
 		case err != nil:
 			r.log.Printf("WARNING: lease renewal failed, retrying: %v", err)
+		default:
+			lost.Reset(time.Until(start.Add(ttl / 2)))
 		}
 	}
 }
