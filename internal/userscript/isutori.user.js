@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         isutori autobench
 // @namespace    https://github.com/traP-jp/isutori
-// @version      3
+// @version      4
 // @description  Enqueues a benchmark when opened by `isutori bench` and reports the result to it.
 // @match        http://127.0.0.1:7879/*
 // @grant        GM_xmlhttpRequest
@@ -31,7 +31,7 @@
      * Starts exactly one benchmark job against target on the page that isutori
      * opened. The portal may take the last target for the final measurement,
      * so never fall back to another server.
-     * @param {string} target bench.target from isutori.toml
+     * @param {string} target the TARGET given to `isutori autobench`
      * @returns {Promise<Job>}
      * @throws if target is not offered or the portal refuses, e.g. because
      *   another job is running.
@@ -41,7 +41,7 @@
       // Options read like "1: 192.168.0.11 (203.0.113.11)"; target may be any of those parts.
       const matches = [...select.options].filter((o) => o.text.split(/[\s:()]+/).includes(target));
       if (matches.length !== 1) {
-        throw new Error(`bench.target ${JSON.stringify(target)} matches ${matches.length} of: ${[...select.options].map((o) => o.text).join(", ")}`);
+        throw new Error(`target ${JSON.stringify(target)} matches ${matches.length} of: ${[...select.options].map((o) => o.text).join(", ")}`);
       }
       select.value = matches[0].value;
       select.dispatchEvent(new Event("change", { bubbles: true }));

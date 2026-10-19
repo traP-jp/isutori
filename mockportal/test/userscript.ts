@@ -146,7 +146,7 @@ try {
     const page = await newPage(browser);
     const result = waitForResult("unknown-target");
     await page.goto(`${pass}/contestant#autobench=unknown-target&receiver=${receiverURL}&target=9`);
-    assert.match((await result).error ?? "", /^enqueue: bench.target "9" matches 0 of: 1: 192/);
+    assert.match((await result).error ?? "", /^enqueue: target "9" matches 0 of: 1: 192/);
     assert.equal(await page.evaluate(() => localStorage.getItem("isutori-mock-portal-jobs")), null);
   }
   console.log("userscript: OK");
