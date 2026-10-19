@@ -203,29 +203,37 @@ func (r *run) execute(parent context.Context) error {
 		}
 	}
 
-	if errors.Is(context.Cause(leaseCtx), queue.ErrTicketLost) {
+	if cause := context.Cause(leaseCtx); leaseLost(cause) {
 		r.log.Print("WARNING: skipping cleanup because the servers may already belong to the next ticket")
-		return errors.Join(runErr, queue.ErrTicketLost)
+		return errors.Join(runErr, cause)
 	}
 	return errors.Join(runErr, r.stage(leaseCtx, "cleanup", r.hook(h.Cleanup)))
 }
 
+// errLeaseUnconfirmed means the queue host could not be reached for long
+// enough that it may have pruned the ticket.
+var errLeaseUnconfirmed = errors.New("lease renewals kept failing; the queue host may have handed the servers to the next ticket")
+
+func leaseLost(err error) bool {
+	return errors.Is(err, queue.ErrTicketLost) || errors.Is(err, errLeaseUnconfirmed)
+}
+
 func (r *run) keepLease(ctx context.Context, cancel context.CancelCauseFunc, name string) {
 	ttl := r.cfg.Queue.LeaseTTL
+	// The host prunes the ticket lease_ttl after the last renewal, which an
+	// unreachable host cannot report, so give up a quarter earlier. A timer of
+	// its own keeps a renewal that never returns from delaying this.
+	giveUp := ttl * 3 / 4
+	deadline := time.AfterFunc(giveUp, func() {
+		r.log.Printf("ERROR: %v", errLeaseUnconfirmed)
+		cancel(errLeaseUnconfirmed)
+	})
+	defer deadline.Stop()
 	t := time.NewTicker(ttl / 4)
 	defer t.Stop()
-	// An unreachable host cannot report the ticket as pruned, so stop well
-	// before lease_ttl; this timer may fire ttl/4 late while a renewal blocks.
-	lost := time.NewTimer(ttl / 2)
-	defer lost.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return
-		case <-lost.C:
-			err := fmt.Errorf("%w: no successful lease renewal for %v", queue.ErrTicketLost, ttl/2)
-			r.log.Printf("ERROR: %v", err)
-			cancel(err)
 			return
 		case <-t.C:
 		}
@@ -244,7 +252,7 @@ func (r *run) keepLease(ctx context.Context, cancel context.CancelCauseFunc, nam
 		case err != nil:
 			r.log.Printf("WARNING: lease renewal failed, retrying: %v", err)
 		default:
-			lost.Reset(time.Until(start.Add(ttl / 2)))
+			deadline.Reset(time.Until(start.Add(giveUp)))
 		}
 	}
 }
