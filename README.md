@@ -23,11 +23,23 @@ codex plugin add isutori@isutori
 
 ## 手動で導入する
 
-チーム全員が同じバージョンを使うよう、競技リポジトリの直下で mise にバージョンを固定して入れます。
+次の環境を前提にしています。
+
+- 競技リポジトリを Git で管理していて、origin へ push できる
+- 手元から各サーバーへ、`ssh s1` のように SSH の別名で入れる
+- 手元に mise と Go がある (mise の `go:` バックエンドは Go でビルドする)
+- 手元が Linux、macOS、WSL のどれか (Windows で直接は動かない)
+
+チーム全員が同じバージョンを使うよう、競技リポジトリの直下で mise にバージョンを固定して入れ、雛形を作ります。
 
 ```sh
 mise use --pin go:github.com/traP-jp/isutori@latest
-isutori init                # isutori.toml の雛形を書き、.gitignore に追記する
+isutori init                # isutori.toml の雛形を書き、.gitignore に .isutori/ を足す
+```
+
+次に、`isutori.toml` の `[hooks]` を埋めます。埋めたら、フックのスクリプトと一緒に commit し、`ops.ref` のブランチ (既定は main) へ push します。isutori はフックと `isutori.toml` を origin から取り出して使うので、push する前の内容は使われません。
+
+```sh
 isutori bench               # HEAD をデプロイしてベンチを回す
 isutori status --json
 ```
