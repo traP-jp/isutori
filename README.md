@@ -35,7 +35,7 @@ isutori status --json
 | コマンド | 内容 |
 |---|---|
 | `bench [--ref REF] [--mode measure\|final] [--requester NAME]` | REF をデプロイしてベンチを回す |
-| `guard` | 自分の回がキューの先頭でなければ 0 以外で終了する |
+| `guard` | 自分の実行がキューの先頭でなければ 0 以外で終了する |
 | `receive [--listen ADDR]` | `bench` のフックから呼び、手動で入力された結果を受け取る |
 | `autobench [--listen ADDR] PORTAL_URL TARGET` | `bench` のフックから呼び、ユーザースクリプトにベンチを回させる |
 | `status [--json]` | キューの中身と、最後にデプロイされたものを表示する |
