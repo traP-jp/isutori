@@ -7,7 +7,7 @@ argument-hint: "[portal-url]"
 
 # isutori を競技リポジトリに組み込む
 
-isutori が受け持つのはキューと、測定枠の中の進行だけである。デプロイ手段 (ansible、Makefile、シェルなど) や集計スクリプトの中身は作らない。段階に結び付けるものが競技リポジトリに無ければ、作業を止めて利用者に伝える。
+isutori が受け持つのは、順番待ちのキューと、順番が来た回の段階コマンドの実行だけである。デプロイ手段 (ansible、Makefile、シェルなど) や集計スクリプトの中身は作らない。段階に結び付けるものが競技リポジトリに無ければ、作業を止めて利用者に伝える。
 
 次の操作は、実行する前に利用者の承認を得る。
 
@@ -24,13 +24,13 @@ mise use --pin go:github.com/traP-jp/isutori@latest
 
 mise が使えない場合は、`go run github.com/traP-jp/isutori@<コミット>` を Makefile などで包み、版を固定する。
 
-入れたら、以降の作業に進む前に `isutori docs` で仕様 (コマンド、測定の流れ、段階コマンドとの約束事、環境変数、終了コード) を読む。
+入れたら、`isutori docs` で仕様 (コマンド、測定の流れ、段階コマンドとの約束事、環境変数、終了コード) を読んでから、以降の作業に進む。
 
 ## 現状を確かめる
 
 - 競技リポジトリに `origin` があり、push できること
 - `ssh s1 true` のように、各サーバーへ SSH の別名で入れること。キューを置くホスト (通常 s1) の別名を控える
-- 既存のデプロイ手段と集計スクリプトを読み、`deploy` / `health` / `prepare` / `collect` / `analyze` / `publish` / `cleanup` のどれに当たるかを対応づける
+- 既存のデプロイ手段と集計スクリプトを読み、それぞれをどの段階 (`deploy`、`collect` など) で使うかを決める
 
 ## isutori.toml を書く
 
@@ -61,12 +61,15 @@ mise が使えない場合は、`go run github.com/traP-jp/isutori@<コミット
 
 ## 反映する
 
-`isutori.toml`、段階コマンド、`ops/isutori.user.js`、`AGENTS.md`、`CLAUDE.md` の変更をコミットし、利用者の承認を得て `ops.ref` のブランチ (既定は main) へ push する。
+`isutori.toml`、段階コマンド、`ops/isutori.user.js`、`AGENTS.md`、`CLAUDE.md` の変更をコミットする。利用者の承認を得てから、`ops.ref` のブランチ (既定は main) へ push する。
 
 ## 確かめる
 
 1. `isutori status` が通り、キューのホストに SSH で入れること
 2. 利用者の承認を得て、`isutori bench` をバックグラウンドで実行する
-3. 終了コードが 0 であること、`$ISUTORI_RUN_DIR` の `run.json` と `bench.json` にスコアが入っていること、`collect` 以降の段階の出力が想定どおりであることを確かめる
+3. 次の 3 点を確かめる
+   - 終了コードが 0 であること
+   - `$ISUTORI_RUN_DIR` の `run.json` と `bench.json` にスコアが入っていること
+   - `collect` 以降の段階の出力が想定どおりであること
 
 失敗したら、`run.log` で失敗した段階を特定して直し、[反映する](#反映する)からやり直す。
