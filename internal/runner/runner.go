@@ -330,7 +330,12 @@ func (r *run) hook(cmdline string) func(context.Context) error {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
 		cmd.WaitDelay = 10 * time.Second
-		if err := cmd.Run(); err != nil {
+		err := cmd.Run()
+		if ctx.Err() != nil && cmd.Process != nil {
+			// The group may ignore Cancel's SIGTERM, and WaitDelay kills only the shell.
+			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		if err != nil {
 			return errors.Join(err, context.Cause(ctx))
 		}
 		return nil

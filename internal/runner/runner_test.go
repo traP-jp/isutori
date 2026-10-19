@@ -5,6 +5,11 @@ import (
 	"errors"
 	"io"
 	"log"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -57,5 +62,29 @@ func TestKeepLease(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHookKillsWhatIgnoresSIGTERM(t *testing.T) {
+	dir := t.TempDir()
+	r := &run{
+		cfg:    &config.Config{Hooks: config.Hooks{Timeout: 300 * time.Millisecond}},
+		opsDir: dir,
+		out:    io.Discard,
+		log:    log.New(io.Discard, "", 0),
+	}
+	err := r.hook(`(trap '' TERM; exec sleep 30) >/dev/null 2>&1 & echo $! > pid; wait`)(context.Background())
+	if err == nil {
+		t.Fatal("hook outlived hooks.timeout")
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	time.Sleep(100 * time.Millisecond)
+	if err := syscall.Kill(pid, 0); err == nil {
+		syscall.Kill(pid, syscall.SIGKILL)
+		t.Fatal("a child that ignored SIGTERM survived the hook")
 	}
 }
