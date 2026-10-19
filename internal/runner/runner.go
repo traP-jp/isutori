@@ -406,13 +406,13 @@ func (r *run) bench(ctx context.Context) error {
 	}
 	r.log.Printf("manual input: http://%s/", b.Listen)
 	if b.Method == config.MethodUserscript {
-		u := b.PortalURL + "#" + url.Values{"autobench": {r.summary.RunID}, "receiver": {"http://" + b.Listen}}.Encode()
+		u := b.PortalURL + "#" + url.Values{"autobench": {r.summary.RunID}, "receiver": {"http://" + b.Listen}, "target": {b.Target}}.Encode()
 		r.log.Printf("opening %s", u)
 		if err := openBrowser(b.OpenCommand, u); err != nil {
 			r.log.Printf("WARNING: %v; open the URL above yourself", err)
 		}
 	}
-	res, err := receiver.Wait(ctx, ln, r.summary.RunID)
+	res, err := receiver.Wait(ctx, ln, r.summary.RunID, b.Target)
 	if err != nil {
 		return err
 	}

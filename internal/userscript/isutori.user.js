@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         isutori autobench
 // @namespace    https://github.com/traP-jp/isutori
-// @version      2
+// @version      3
 // @description  Enqueues a benchmark when opened by `isutori bench` and reports the result to it.
 // @match        http://127.0.0.1:7879/*
 // @grant        GM_xmlhttpRequest
@@ -28,16 +28,23 @@
 
   const adapter = {
     /**
-     * Starts exactly one benchmark job on the page that isutori opened.
+     * Starts exactly one benchmark job against target on the page that isutori
+     * opened. The portal may take the last target for the final measurement,
+     * so never fall back to another server.
+     * @param {string} target bench.target from isutori.toml
      * @returns {Promise<Job>}
-     * @throws if the portal refuses, e.g. because another job is running.
+     * @throws if target is not offered or the portal refuses, e.g. because
+     *   another job is running.
      */
-    async enqueue() {
+    async enqueue(target) {
       const select = await waitFor("the server select", () => document.querySelector("select"));
-      if (select.value === "") {
-        select.value = select.options[0].value;
-        select.dispatchEvent(new Event("change", { bubbles: true }));
+      // Options read like "1: 192.168.0.11 (203.0.113.11)"; target may be any of those parts.
+      const matches = [...select.options].filter((o) => o.text.split(/[\s:()]+/).includes(target));
+      if (matches.length !== 1) {
+        throw new Error(`bench.target ${JSON.stringify(target)} matches ${matches.length} of: ${[...select.options].map((o) => o.text).join(", ")}`);
       }
+      select.value = matches[0].value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
       const button = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Enqueue");
       if (!button) throw new Error("Enqueue button not found");
       button.click();
@@ -101,6 +108,7 @@
    * @typedef {object} Run
    * @property {string} runId
    * @property {string} receiver
+   * @property {string} target
    * @property {number} startedAt epoch milliseconds
    * @property {string} [note]
    */
@@ -158,11 +166,12 @@
     const params = new URLSearchParams(location.hash.slice(1));
     const runId = params.get("autobench");
     const receiver = params.get("receiver");
-    if (!runId || !receiver) return null;
+    const target = params.get("target");
+    if (!runId || !receiver || !target) return null;
     history.replaceState(null, "", location.pathname + location.search);
     const current = loadState();
     if (current?.runId === runId) return current;
-    return { runId, receiver, phase: "enqueue", startedAt: Date.now() };
+    return { runId, receiver, target, phase: "enqueue", startedAt: Date.now() };
   }
 
   /**
@@ -204,7 +213,7 @@
     if (state.phase === "enqueue") {
       saveState({ ...state, phase: "enqueuing" });
       try {
-        const job = await adapter.enqueue();
+        const job = await adapter.enqueue(state.target);
         state = { ...state, phase: "waiting", job };
         saveState(state);
       } catch (e) {

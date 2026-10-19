@@ -9,7 +9,7 @@ import (
 
 func TestHandler(t *testing.T) {
 	results := make(chan Result, 1)
-	srv := httptest.NewServer(handler("run1", results))
+	srv := httptest.NewServer(handler("run1", "", results))
 	defer srv.Close()
 
 	post := func(contentType, body string) int {

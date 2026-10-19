@@ -48,6 +48,7 @@ const (
 type Bench struct {
 	Method      string        `toml:"method"`
 	PortalURL   string        `toml:"portal_url"`
+	Target      string        `toml:"target"`
 	Listen      string        `toml:"listen"`
 	Timeout     time.Duration `toml:"timeout"`
 	OpenCommand string        `toml:"open_command"`
@@ -99,6 +100,9 @@ func (c *Config) validate() error {
 		if c.Bench.PortalURL == "" {
 			errs = append(errs, "bench.portal_url is required when bench.method = \"userscript\"")
 		}
+		if c.Bench.Target == "" {
+			errs = append(errs, "bench.target is required when bench.method = \"userscript\"")
+		}
 	default:
 		errs = append(errs, fmt.Sprintf("bench.method must be %q or %q, got %q", MethodUserscript, MethodManual, c.Bench.Method))
 	}
@@ -131,6 +135,7 @@ cleanup = "ops/cleanup.sh"  # deploy に進んだ回は、失敗や中断があ�
 [bench]
 method = "manual"     # userscript | manual
 # portal_url = "https://portal.example.com/"
+# target = "1"        # ベンチ対象のサーバー。ポータルの選択肢にある番号か IP で書く
 # listen = "127.0.0.1:7878"
 # timeout = "15m"
 # open_command = "wslview"

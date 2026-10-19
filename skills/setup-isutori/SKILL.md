@@ -42,6 +42,7 @@ mise が使えない場合は、`go run github.com/traP-jp/isutori@<コミット
 - `collect` / `analyze` / `publish` の出力は `$ISUTORI_RUN_DIR` の下に置く
 - `cleanup` は、どの段階で失敗した後に呼ばれても動くようにする
 - `bench.method` は、ポータルの URL が分かっていれば `userscript`、分からなければ `manual` にする
+- `userscript` のときは、ベンチの対象サーバーを利用者に確かめて `bench.target` に書く。最後に選んだサーバーが最終計測にも使われることがあるので、自分で推測して決めない
 
 ## ユーザースクリプトを当日のポータルに合わせる
 

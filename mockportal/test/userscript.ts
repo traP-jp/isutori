@@ -87,23 +87,25 @@ try {
   {
     const page = await newPage(browser);
     const result = waitForResult("pass");
-    await page.goto(`${pass}/contestant#autobench=pass&receiver=${receiverURL}`);
+    await page.goto(`${pass}/contestant#autobench=pass&receiver=${receiverURL}&target=2`);
     const r = await result;
     assert.equal(r.passed, true);
+    const jobs = await page.evaluate(() => JSON.parse(localStorage.getItem("isutori-mock-portal-jobs") ?? "[]"));
+    assert.equal(jobs[0].targetId, 2);
     assert.equal(r.score, 12345);
     assert.match(r.message ?? "", /score=12345/);
     assert.equal(r.error, undefined);
 
     // A second run in the same tab enqueues a new job instead of resuming.
     const again = waitForResult("pass-again");
-    await page.goto(`${pass}/contestant#autobench=pass-again&receiver=${receiverURL}`);
+    await page.goto(`${pass}/contestant#autobench=pass-again&receiver=${receiverURL}&target=192.168.0.12`);
     assert.equal((await again).passed, true);
     assert.match(page.url(), /benchmark_jobs\/2$/);
   }
   {
     const page = await newPage(browser);
     const result = waitForResult("fail");
-    await page.goto(`${fail}/contestant#autobench=fail&receiver=${receiverURL}`);
+    await page.goto(`${fail}/contestant#autobench=fail&receiver=${receiverURL}&target=1`);
     const r = await result;
     assert.equal(r.passed, false);
     assert.equal(r.score, 0);
@@ -112,7 +114,7 @@ try {
   {
     const page = await newPage(browser);
     const result = waitForResult("errored");
-    await page.goto(`${error}/contestant#autobench=errored&receiver=${receiverURL}`);
+    await page.goto(`${error}/contestant#autobench=errored&receiver=${receiverURL}&target=1`);
     const r = await result;
     assert.equal(r.passed, false);
     assert.match(r.message ?? "", /^ERRORED/);
@@ -121,7 +123,7 @@ try {
     // Reloading the job page while waiting resumes instead of enqueuing again.
     const page = await newPage(browser);
     const result = waitForResult("reload");
-    await page.goto(`${pass}/contestant#autobench=reload&receiver=${receiverURL}`);
+    await page.goto(`${pass}/contestant#autobench=reload&receiver=${receiverURL}&target=1`);
     await page.waitForURL(/benchmark_jobs\/\d+$/);
     await page.reload();
     assert.equal((await result).passed, true);
@@ -135,9 +137,17 @@ try {
     await page.getByRole("button", { name: "Enqueue" }).click();
     await page.waitForURL(/benchmark_jobs\/\d+$/);
     const result = waitForResult("busy");
-    await page.goto(`${pass}/contestant#autobench=busy&receiver=${receiverURL}`);
+    await page.goto(`${pass}/contestant#autobench=busy&receiver=${receiverURL}&target=1`);
     const r = await result;
     assert.match(r.error ?? "", /^enqueue: portal refused to enqueue: .*no other concurrent job/);
+  }
+  {
+    // An unknown target must not fall back to another server.
+    const page = await newPage(browser);
+    const result = waitForResult("unknown-target");
+    await page.goto(`${pass}/contestant#autobench=unknown-target&receiver=${receiverURL}&target=9`);
+    assert.match((await result).error ?? "", /^enqueue: bench.target "9" matches 0 of: 1: 192/);
+    assert.equal(await page.evaluate(() => localStorage.getItem("isutori-mock-portal-jobs")), null);
   }
   console.log("userscript: OK");
 } finally {
