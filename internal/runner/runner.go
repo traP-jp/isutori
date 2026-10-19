@@ -162,7 +162,7 @@ func (r *run) execute(parent context.Context) error {
 	}
 	r.log.Printf("enqueued %s", name)
 	defer func() {
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Minute)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), r.cfg.Queue.LeaseTTL/4)
 		defer cancel()
 		if err := r.q.Remove(ctx, name); err != nil {
 			r.log.Printf("WARNING: failed to remove ticket %s; run `isutori queue clear` if it blocks others: %v", name, err)
