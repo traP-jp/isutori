@@ -30,13 +30,14 @@ type Ops struct {
 }
 
 type Hooks struct {
-	Deploy  string `toml:"deploy"`
-	Health  string `toml:"health"`
-	Prepare string `toml:"prepare"`
-	Collect string `toml:"collect"`
-	Analyze string `toml:"analyze"`
-	Publish string `toml:"publish"`
-	Cleanup string `toml:"cleanup"`
+	Timeout time.Duration `toml:"timeout"`
+	Deploy  string        `toml:"deploy"`
+	Health  string        `toml:"health"`
+	Prepare string        `toml:"prepare"`
+	Collect string        `toml:"collect"`
+	Analyze string        `toml:"analyze"`
+	Publish string        `toml:"publish"`
+	Cleanup string        `toml:"cleanup"`
 }
 
 const (
@@ -56,6 +57,7 @@ func Load(path string) (*Config, error) {
 	c := &Config{
 		Queue: Queue{Dir: ".isutori", LeaseTTL: 120 * time.Second, SSHCommand: "ssh"},
 		Ops:   Ops{Ref: "origin/main"},
+		Hooks: Hooks{Timeout: 10 * time.Minute},
 		Bench: Bench{Method: MethodManual, Listen: "127.0.0.1:7878", Timeout: 15 * time.Minute},
 	}
 	md, err := toml.DecodeFile(path, c)
@@ -78,6 +80,9 @@ func (c *Config) validate() error {
 	}
 	if c.Queue.LeaseTTL < 10*time.Second {
 		errs = append(errs, "queue.lease_ttl must be at least 10s")
+	}
+	if c.Hooks.Timeout <= 0 {
+		errs = append(errs, "hooks.timeout must be positive")
 	}
 	if c.Hooks.Deploy == "" {
 		errs = append(errs, "hooks.deploy is required")
@@ -108,6 +113,7 @@ ref = "origin/main"   # 段階コマンドと isutori.toml はこの ref から�
 
 # 段階コマンドは sh -c で実行する。0 以外で終了したら cleanup へ進む
 [hooks]
+# timeout = "10m"           # 段階コマンド 1 つあたりの上限
 deploy  = "ops/deploy.sh"   # 冒頭で isutori guard を呼ぶこと
 health  = "ops/health.sh"
 prepare = "ops/prepare.sh"

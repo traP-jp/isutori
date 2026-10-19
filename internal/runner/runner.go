@@ -287,6 +287,9 @@ func (r *run) hook(cmdline string) func(context.Context) error {
 			r.log.Print("(no hook configured)")
 			return nil
 		}
+		timeout := r.cfg.Hooks.Timeout
+		ctx, cancel := context.WithTimeoutCause(ctx, timeout, fmt.Errorf("exceeded hooks.timeout (%v)", timeout))
+		defer cancel()
 		cmd := exec.CommandContext(ctx, "sh", "-c", cmdline)
 		cmd.Dir = r.opsDir
 		cmd.Env = r.env
@@ -297,7 +300,10 @@ func (r *run) hook(cmdline string) func(context.Context) error {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
 		cmd.WaitDelay = 10 * time.Second
-		return cmd.Run()
+		if err := cmd.Run(); err != nil {
+			return errors.Join(err, context.Cause(ctx))
+		}
+		return nil
 	}
 }
 
