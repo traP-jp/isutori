@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         isutori autobench
 // @namespace    https://github.com/traP-jp/isutori
-// @version      1
+// @version      2
 // @description  Enqueues a benchmark when opened by `isutori bench` and reports the result to it.
 // @match        http://127.0.0.1:7879/*
 // @grant        GM_xmlhttpRequest
@@ -33,7 +33,7 @@
      * @throws if the portal refuses, e.g. because another job is running.
      */
     async enqueue() {
-      const select = await waitFor(() => document.querySelector("select"));
+      const select = await waitFor("the server select", () => document.querySelector("select"));
       if (select.value === "") {
         select.value = select.options[0].value;
         select.dispatchEvent(new Event("change", { bubbles: true }));
@@ -41,7 +41,7 @@
       const button = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Enqueue");
       if (!button) throw new Error("Enqueue button not found");
       button.click();
-      return waitFor(() => {
+      return waitFor("the job page", () => {
         const job = adapter.currentJob();
         if (job) return job;
         const error = document.querySelector(".message.is-danger, .notification.is-danger");
@@ -116,15 +116,16 @@
 
   /**
    * @template T
+   * @param {string} what named in the timeout error
    * @param {() => T | null | undefined} fn
    * @returns {Promise<T>}
    */
-  async function waitFor(fn, timeoutMs = enqueueTimeoutMs) {
+  async function waitFor(what, fn, timeoutMs = enqueueTimeoutMs) {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const v = fn();
       if (v) return v;
-      if (Date.now() > deadline) throw new Error(`timed out after ${timeoutMs / 1000}s`);
+      if (Date.now() > deadline) throw new Error(`timed out after ${timeoutMs / 1000}s waiting for ${what}`);
       await sleep(200);
     }
   }
@@ -213,7 +214,7 @@
       // The page was reloaded while enqueuing. Never press the button again:
       // either this page shows the new job or the outcome is unknown.
       try {
-        const job = await waitFor(() => adapter.currentJob(), 15 * 1000);
+        const job = await waitFor("the job page", () => adapter.currentJob(), 15 * 1000);
         state = { ...state, phase: "waiting", job };
         saveState(state);
       } catch {
