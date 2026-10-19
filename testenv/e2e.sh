@@ -70,6 +70,14 @@ chmod +x ops/hook.sh
 git add . && git commit -qm init && git push -q origin HEAD:main 2>/dev/null
 git fetch -q origin
 
+# Waits until $2 shows $3, failing if process $1 exits first.
+wait_log() {
+  until grep -q "$3" "$2"; do
+    kill -0 "$1" 2>/dev/null || { echo "$2 ended without '$3'"; cat "$2"; exit 1; }
+    sleep 0.2
+  done
+}
+
 post_results() {
   local passed=${1:-true}
   while :; do
@@ -113,10 +121,10 @@ trap 'docker compose -f "$here/compose.yml" down' EXIT
 ssh -F "$work/ssh_config" s1 'rm -f markers'
 CLEANUP_SLEEP=15 isutori bench --requester dave > "$work/dave.json" 2> "$work/dave.log" &
 dave=$!
-until grep -q '== bench' "$work/dave.log"; do sleep 0.2; done
+wait_log $dave "$work/dave.log" '== bench'
 isutori bench --requester eve > "$work/eve.json" 2> "$work/eve.log" &
 eve=$!
-until grep -q 'waiting: 1 ahead' "$work/eve.log"; do sleep 0.2; done
+wait_log $eve "$work/eve.log" 'waiting: 1 ahead'
 kill -INT $dave
 post_results &
 poster=$!
@@ -143,9 +151,9 @@ kill $poster
 trap 'docker compose -f "$here/compose.yml" down' EXIT
 CLEANUP_SLEEP=60 isutori bench --requester gina > "$work/gina.json" 2> "$work/gina.log" &
 gina=$!
-until grep -q '== bench' "$work/gina.log"; do sleep 0.2; done
+wait_log $gina "$work/gina.log" '== bench'
 kill -INT $gina
-until grep -q '== cleanup' "$work/gina.log"; do sleep 0.2; done
+wait_log $gina "$work/gina.log" '== cleanup'
 sleep 2
 kill -INT $gina
 start=$SECONDS
