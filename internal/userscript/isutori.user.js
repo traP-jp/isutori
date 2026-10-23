@@ -1,11 +1,17 @@
 // ==UserScript==
 // @name         isutori autobench
 // @namespace    https://github.com/traP-jp/isutori
-// @version      8
+// @version      9
 // @description  Records portal DOM changes and runs benchmarks after checking the script identity.
 // @match        http://127.0.0.1:7879/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
+// @grant        GM_getTab
+// @grant        GM_saveTab
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_addValueChangeListener
+// @grant        window.close
 // @connect      127.0.0.1
 // @connect      localhost
 // @run-at       document-idle
@@ -14,6 +20,8 @@
 // @ts-check
 
 (function isutoriScript() {
+  let inspectionBusy = () => false;
+  let checkTabCleanup = () => {};
   /** @typedef {{ expected: string, actual: string, status: string, error?: string }} Verification */
   function scriptSource() { return Function.prototype.toString.call(isutoriScript); }
   /** @param {Verification | undefined} value */
@@ -48,6 +56,7 @@
   let identity;
   let active = false;
   let stoppedByUser = false;
+  inspectionBusy = () => active || starting || sending || pending.length > 0;
   const eventTypes = ["click", "input", "change", "visibilitychange"];
 
   /** @param {string} message */
@@ -138,6 +147,7 @@
       stop(`STOPPED: ${e.message}; ${pending.length} unsaved event(s). Keep this page to retry, or reload to discard them.`);
     } finally {
       sending = false;
+      checkTabCleanup();
     }
   }
 
@@ -223,6 +233,7 @@
       show(`STOPPED: ${e.message}`);
     } finally {
       starting = false;
+      checkTabCleanup();
     }
   });
   GM_registerMenuCommand("isutori: stop recording", () => {
@@ -245,12 +256,13 @@
         return;
       }
       return start(parseConnection(`${config.endpoint.replace(/\/api\/inspect$/, "/")}#${config.token}`));
-    }).catch((e) => stop(`STOPPED: ${e.message}`)).finally(() => { starting = false; });
+    }).catch((e) => stop(`STOPPED: ${e.message}`)).finally(() => { starting = false; checkTabCleanup(); });
   }
 })();
 
 (function () {
   "use strict";
+  if (typeof window !== "undefined" && window.top !== window.self) return;
 
   // ===== PORTAL ADAPTER: rewrite this section for the portal of the day =====
   // The example below targets isucon14-portal (and `isutori mock-portal`).
@@ -395,6 +407,8 @@
    * @property {string} target
    * @property {number} startedAt epoch milliseconds
    * @property {string} [note]
+   * @property {boolean} [autoOpened]
+   * @property {{order: number, received?: boolean, keep?: boolean, job?: Job}} [tab]
    */
 
   /**
@@ -407,6 +421,61 @@
   const storageKey = "isutori-autobench-v2";
   /** @type {Verification | undefined} */
   let verified;
+  const cleanupEnabledKey = "isutori-tab-cleanup";
+  let launchedFromHash = false;
+  /** @type {{isutoriRun?: string} | undefined} */
+  let browserTab;
+  /** @typedef {{runId: string, order: number, receivedOrder: number}} TabGroup */
+  /** @param {State} state */
+  function tabGroupKey(state) {
+    return `isutori-tabs:${location.origin}:${new URL(state.receiver).origin}`;
+  }
+
+  /** @param {State} state @returns {State} */
+  function registerTab(state) {
+    if (!state.autoOpened || state.tab || !browserTab || (!launchedFromHash && browserTab.isutoriRun !== state.runId) || typeof GM_getValue !== "function") return state;
+    try {
+      const key = tabGroupKey(state);
+      const latest = /** @type {TabGroup | null} */ (GM_getValue(key, null));
+      const order = latest?.runId === state.runId ? latest.order : (latest?.order ?? 0) + 1;
+      browserTab.isutoriRun = state.runId;
+      GM_saveTab(browserTab);
+      state = {...state, tab: {order}};
+      saveState(state);
+      if (latest?.runId !== state.runId) GM_setValue(key, {runId: state.runId, order, receivedOrder: latest?.receivedOrder ?? 0});
+    } catch (e) {
+      console.warn("isutori: tab cleanup unavailable", e);
+    }
+    return state;
+  }
+
+  checkTabCleanup = () => {
+    try {
+      const state = loadState();
+      if (!state?.autoOpened || browserTab?.isutoriRun !== state.runId || !state.tab?.received || state.tab.keep || state.phase !== "done" || inspectionBusy() ||
+          typeof GM_getValue !== "function" || !GM_getValue(cleanupEnabledKey, false)) return;
+      const current = adapter.currentJob();
+      if (!current || current.jobId !== state.tab.job?.jobId) return;
+      const latest = /** @type {TabGroup | null} */ (GM_getValue(tabGroupKey(state), null));
+      if (latest && latest.receivedOrder > state.tab.order) window.close();
+    } catch (e) {
+      console.warn("isutori: could not close old tab", e);
+    }
+  };
+
+  /** @param {State} state */
+  function notifyResultReceived(state) {
+    if (!state.tab?.received || typeof GM_getValue !== "function") return;
+    try {
+      const key = tabGroupKey(state);
+      const latest = /** @type {TabGroup | null} */ (GM_getValue(key, null));
+      if (latest && latest.order >= state.tab.order && latest.receivedOrder < state.tab.order) {
+        GM_setValue(key, {...latest, receivedOrder: state.tab.order});
+      }
+    } catch (e) {
+      console.warn("isutori: tab cleanup notification failed", e);
+    }
+  }
 
   /**
    * @template T
@@ -451,10 +520,11 @@
     const receiver = params.get("receiver");
     const target = params.get("target");
     if (!runId || !receiver || !target) return null;
+    launchedFromHash = true;
     history.replaceState(null, "", location.pathname + location.search);
     const current = loadState();
     if (current?.runId === runId) return current;
-    return { runId, receiver, target, phase: "enqueue", startedAt: Date.now() };
+    return { runId, receiver, target, phase: "enqueue", startedAt: Date.now(), autoOpened: true };
   }
 
   /**
@@ -485,10 +555,18 @@
   async function report(state, body) {
     try {
       await post(state, {...body, userscript: verified});
-      saveState({ ...state, phase: "done", note: "error" in body ? body.error : `passed=${body.passed} score=${body.score}` });
+      const saved = loadState();
+      const tab = saved?.runId === state.runId ? saved.tab : state.tab;
+      state = {...state, phase: "done", tab: tab && {...tab, received: !("error" in body), job: "job" in state ? state.job : undefined}, note: "error" in body ? body.error : `passed=${body.passed} score=${body.score}`};
+      saveState(state);
     } catch (e) {
-      saveState({ ...state, phase: "unreported", note: `could not report to isutori: ${e.message}` });
+      const saved = loadState();
+      const tab = saved?.runId === state.runId ? saved.tab : state.tab;
+      saveState({ ...state, tab, phase: "unreported", note: `could not report to isutori: ${e.message}` });
+      return;
     }
+    notifyResultReceived(state);
+    checkTabCleanup();
   }
 
   /** @param {State} state */
@@ -506,6 +584,7 @@
       saveState({...state, note: `BLOCKED: userscript verification: ${e.message}; use the manual result form or install the expected script and reload`});
       return;
     }
+    state = registerTab(state);
     if (state.phase === "enqueue") {
       try {
         const prepared = await adapter.prepare(state.target);
@@ -588,8 +667,36 @@
     }
   });
 
+  GM_registerMenuCommand("isutori: toggle automatic tab cleanup", () => {
+    if (typeof GM_getValue !== "function") return alert("Tab cleanup requires Tampermonkey storage permissions; reinstall the userscript.");
+    try {
+      const enabled = !GM_getValue(cleanupEnabledKey, false);
+      GM_setValue(cleanupEnabledKey, enabled);
+      alert(`Automatic tab cleanup ${enabled ? "enabled" : "disabled"}.`);
+      checkTabCleanup();
+    } catch (e) { alert(`Tab cleanup unavailable: ${e.message}`); }
+  });
+  GM_registerMenuCommand("isutori: toggle keep this tab", () => {
+    const state = loadState();
+    if (!state?.tab || browserTab?.isutoriRun !== state.runId) return alert("This tab is not managed by automatic tab cleanup.");
+    const keep = !state.tab.keep;
+    saveState({...state, tab: {...state.tab, keep}});
+    alert(keep ? "This tab will be kept." : "This tab can be cleaned up.");
+    checkTabCleanup();
+  });
+
   const state = stateFromHash() ?? loadState();
-  if (state) run(state);
+  try {
+    if (typeof GM_addValueChangeListener === "function") {
+      GM_addValueChangeListener(cleanupEnabledKey, checkTabCleanup);
+      if (state) GM_addValueChangeListener(tabGroupKey(state), checkTabCleanup);
+    }
+  } catch (e) { console.warn("isutori: tab cleanup listener unavailable", e); }
+  const start = () => { checkTabCleanup(); if (state) void run(state); };
+  if (typeof GM_getTab === "function") {
+    try { GM_getTab(tab => { browserTab = tab; start(); }); }
+    catch (e) { console.warn("isutori: tab identity unavailable", e); start(); }
+  } else start();
 })();
 
 })();
