@@ -18,6 +18,7 @@ import (
 
 	"github.com/traP-jp/isutori/internal/config"
 	"github.com/traP-jp/isutori/internal/queue"
+	"github.com/traP-jp/isutori/internal/userscript"
 )
 
 const (
@@ -442,9 +443,10 @@ func (r *run) bench(ctx context.Context) error {
 
 // BenchResult is what hooks.bench writes to $ISUTORI_BENCH_RESULT.
 type BenchResult struct {
-	Passed  bool   `json:"passed"`
-	Score   int64  `json:"score"`
-	Message string `json:"message"`
+	Passed     bool                    `json:"passed"`
+	Score      int64                   `json:"score"`
+	Message    string                  `json:"message"`
+	Userscript userscript.Verification `json:"userscript,omitzero"`
 }
 
 // SaveBenchResult durably replaces the result file before returning success.

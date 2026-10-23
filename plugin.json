@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "isutori",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "Set up isutori, the deploy-and-benchmark queue for ISUCON teams, in a contest repository",
   "author": {
     "name": "traP Community"

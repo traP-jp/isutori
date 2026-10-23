@@ -5,13 +5,14 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 
 const source = readFileSync(new URL("../../internal/userscript/isutori.user.js", import.meta.url), "utf8");
-const storageKey = "isutori-autobench";
+const storageKey = "isutori-autobench-v2";
 const options = [
   { value: "1", text: "1: 192.168.0.11", disabled: false },
   { value: "2", text: "2: 192.168.0.12", disabled: false },
 ];
 
 function page(initialState?: object, automatic = false) {
+  const badges: { textContent: string }[] = [];
   const menus = new Map<string, () => void | Promise<void>>();
   const storage = new Map<string, string>();
   if (initialState) storage.set(storageKey, JSON.stringify(initialState));
@@ -21,9 +22,12 @@ function page(initialState?: object, automatic = false) {
   const location = {
     pathname: "/contestant",
     search: "",
-    hash: automatic ? "#autobench=test&receiver=http://localhost:7878&target=2" : "",
+    hash: automatic ? "#autobench_v2=test&receiver=http://localhost:7878&target=2" : "",
   };
   const controls = {
+    verification: "matched",
+    running: false,
+    handshakes: 0,
     target: "2",
     options: options.map((option) => ({ ...option })),
     value: "1",
@@ -60,7 +64,7 @@ function page(initialState?: object, automatic = false) {
     innerText: "Score: 42",
     querySelector(selector: string) {
       if (selector === ".card-header-title") return { textContent: title };
-      if (selector === ".tag") return { textContent: "FINISHED" };
+      if (selector === ".tag") return { textContent: controls.running ? "RUNNING" : "FINISHED" };
       return { innerText: "official result" };
     },
     querySelectorAll() { return [{ textContent: "Finished" }, { textContent: "Passed" }]; },
@@ -73,7 +77,7 @@ function page(initialState?: object, automatic = false) {
       return [];
     },
     createElement() { return { style: {}, textContent: "", setAttribute() {} }; },
-    body: { append() {} },
+    body: { append(element: { textContent: string }) { badges.push(element); } },
   };
   let now = 0;
   const sandbox = {
@@ -100,13 +104,18 @@ function page(initialState?: object, automatic = false) {
     prompt() { controls.prompts++; return controls.target; },
     alert: (value: string) => alerts.push(value),
     GM_registerMenuCommand: (name: string, callback: () => void | Promise<void>) => menus.set(name, callback),
-    GM_xmlhttpRequest(request: { data: string; onload: (response: { status: number }) => void }) {
+    GM_xmlhttpRequest(request: { url: string; data: string; onload: (response: { status: number; responseText: string }) => void }) {
+      if (request.url.endsWith("/api/userscript")) {
+        controls.handshakes++;
+        request.onload({status:200,responseText:JSON.stringify({expected:"sha256:expected",actual:"sha256:actual",status:controls.verification})});
+        return;
+      }
       posted.push(request.data);
-      request.onload({ status: 204 });
+      request.onload({ status: 204, responseText:"" });
     },
   };
   return {
-    controls, alerts, posted, phases, storage, location,
+    controls, alerts, posted, phases, storage, location, badges,
     start() { runInNewContext(source, sandbox); },
     async check() {
       const callback = menus.get("isutori: check enqueue");
@@ -271,4 +280,44 @@ test("a reload on the new job page resumes result collection without preparation
   assert.equal(p.controls.clicks, 0);
   assert.equal(p.controls.selected, "1");
   assert.equal(JSON.parse(p.posted[0]).score, 42);
+});
+
+test("an unverified script never prepares or registers", async () => {
+ for (const status of ["mismatched", "unknown"]) {
+  const p=page(undefined,true);p.controls.verification=status;p.start();await setImmediate();
+  assert.equal(p.controls.handshakes,1);assert.equal(p.controls.selected,"1");assert.equal(p.controls.clicks,0);assert.equal(p.posted.length,0);
+  assert.match(JSON.parse(p.storage.get(storageKey) ?? "null").note,/BLOCKED/);
+ }
+});
+
+test("the legacy launch URL cannot start a new automatic run", async () => {
+ const p=page(undefined,true);p.location.hash="#autobench=old&receiver=http://localhost:7878&target=2";
+ p.start();await setImmediate();
+ assert.equal(p.controls.handshakes,0);assert.equal(p.controls.clicks,0);assert.equal(p.storage.size,0);
+});
+
+test("a blocked run can verify on reload without duplicate registration", async () => {
+ const p=page(undefined,true);p.controls.verification="mismatched";p.start();await setImmediate();
+ assert.equal(p.controls.clicks,0);p.controls.verification="matched";p.start();await setImmediate();
+ assert.equal(p.controls.clicks,1);assert.equal(p.posted.length,1);assert.equal(p.controls.handshakes,2);
+ p.start();await setImmediate();assert.equal(p.controls.clicks,1);assert.equal(p.controls.handshakes,2);
+});
+
+
+test("verification recovery clears the blocked badge while the job is still running", async () => {
+  const p = page({ runId: "test", receiver: "http://localhost:7878", target: "2", phase: "waiting", job: { jobId: "1" }, startedAt: 0, note: "BLOCKED: userscript verification: mismatched" });
+  p.location.pathname = "/contestant/benchmark_jobs/1";
+  p.controls.running = true;
+  let checked = false;
+  p.controls.onTimer = () => {
+    assert.doesNotMatch(p.badges[0].textContent, /BLOCKED/);
+    assert.equal(JSON.parse(p.storage.get(storageKey) ?? "null").note, undefined);
+    checked = true;
+    p.controls.running = false;
+  };
+  p.start();
+  await setImmediate();
+  assert.ok(checked);
+  assert.equal(p.controls.clicks, 0);
+  assert.equal(p.posted.length, 1);
 });

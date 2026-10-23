@@ -1,7 +1,8 @@
-// Runs the userscript (with its example adapter) against `isutori mock-portal`
-// and checks what it reports to a stand-in for the isutori receiver.
+import {createHash} from "node:crypto";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import {mkdirSync,mkdtempSync,readFileSync,writeFileSync} from "node:fs";
+import {resolve,join} from "node:path";
 import { createServer } from "node:http";
 import { chromium, type Browser, type Dialog, type Page } from "playwright";
 
@@ -46,6 +47,13 @@ const receiver = createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
+    if(req.url==="/api/userscript") {
+      const request:{source:string}=JSON.parse(body);
+      const actual="sha256:"+createHash("sha256").update(request.source.replace(/\r\n?/g,"\n")).digest("hex");
+      const source=userscript.slice(userscript.indexOf("function isutoriScript() {"),userscript.lastIndexOf("})();")+1);
+      const expected="sha256:"+createHash("sha256").update(source.replace(/\r\n?/g,"\n")).digest("hex");
+      res.writeHead(200,{"Content-Type":"application/json"}).end(JSON.stringify({expected,actual,status:actual===expected?"matched":"mismatched"}));return;
+    }
     const result: Result = JSON.parse(body);
     posted.get(result.run_id)?.(result);
     res.writeHead(204).end();
@@ -68,7 +76,7 @@ async function resultAfter(runId: string, action: () => Promise<unknown>, timeou
   }
 }
 
-async function newPage(browser: Browser) {
+async function newPage(browser: Browser, script = userscript) {
   const context = await browser.newContext();
   await context.exposeBinding("__gmXhr", async (_source, d: GMRequest) => {
     try {
@@ -83,7 +91,7 @@ async function newPage(browser: Browser) {
     window.GM_registerMenuCommand = (name, callback) => window.__isutoriMenus.set(name, callback);
     window.GM_xmlhttpRequest = (d) => window.__gmXhr({ url: d.url, method: d.method, headers: d.headers, data: d.data })
       .then((r) => (r ? d.onload(r) : d.onerror()));
-    document.addEventListener("DOMContentLoaded", () => { ${userscript} });
+    document.addEventListener("DOMContentLoaded", () => { ${script} });
   `);
   const page = await context.newPage();
   page.on("pageerror", (e) => {
@@ -126,6 +134,52 @@ await new Promise((r) => setTimeout(r, 1000));
 let browser: Browser | undefined;
 try {
   browser = await chromium.launch({ headless: true });
+  for (const manual of [false,true]) {
+    const runId=manual?"identity-manual":"identity-integration";
+    mkdirSync("../.claude",{recursive:true});
+    const work=mkdtempSync(resolve("../.claude/identity-browser-"));
+    const scriptPath=join(work,"script.user.js"),resultPath=join(work,"bench.json");
+    writeFileSync(scriptPath,userscript);
+    const cli=spawn(resolve(".cache/isutori"),["autobench","--listen","127.0.0.1:17885","--userscript",scriptPath,"--open-command","/bin/true",`${pass}/contestant`,"2"],{env:{...process.env,ISUTORI_RUN_ID:runId,ISUTORI_BENCH_RESULT:resultPath},stdio:["ignore","ignore","pipe"]});
+    let output="";cli.stderr.on("data",chunk=>{output+=chunk;});
+    const exited=new Promise<number|null>(resolve=>cli.once("close",resolve));
+    const page=await newPage(browser,manual?userscript.replace("async prepare(target)","async prepare(target /* old */)"):userscript);
+    try {
+      await new Promise<void>((resolve,reject)=>{
+        const timer=setTimeout(()=>reject(new Error(`CLI did not start: ${output}`)),10000);
+        const ready=()=>{if(output.includes("waiting for a verified userscript")){clearTimeout(timer);cli.stderr.off("data",ready);resolve();}};
+        cli.stderr.on("data",ready);ready();
+        exited.then(()=>{clearTimeout(timer);reject(new Error(`CLI exited: ${output}`));});
+      });
+      await page.goto(`${pass}/contestant#autobench_v2=${runId}&receiver=http://127.0.0.1:17885&target=2`);
+      if (manual) {
+        await page.getByText(/BLOCKED: userscript verification/).waitFor();
+        assert.equal(await page.evaluate(()=>localStorage.getItem("isutori-mock-portal-jobs")),null);
+        const form=await page.context().newPage();
+        await form.goto("http://127.0.0.1:17885/");
+        await form.locator('[name="passed"]').check();await form.locator('[name="score"]').fill("42");
+        await form.getByRole("button",{name:"送信",exact:true}).click();
+        await form.locator("#status").getByText("送信しました。このタブは閉じて構いません。",{exact:true}).waitFor();
+        await form.close();
+      }
+      const code=await Promise.race([exited,new Promise<never>((_,reject)=>{const timer=setTimeout(()=>reject(new Error(`CLI did not finish: ${output}`)),20000);exited.finally(()=>clearTimeout(timer));})]);
+      assert.equal(code,0,output);
+      const result:{passed:boolean;score:number;userscript:{status:string;expected:string;actual:string}}=JSON.parse(readFileSync(resultPath,"utf8"));
+      assert.equal(result.passed,true);assert.equal(result.score,manual?42:12345);
+      assert.equal(result.userscript.status,manual?"not_checked":"matched");assert.equal(result.userscript.expected,result.userscript.actual);
+      console.log(`userscript identity: real autobench CLI saved ${manual?"manual result after mismatch":"verified benchmark result"}`);
+    } finally {await page.close();cli.kill("SIGINT");await exited;}
+  }
+  {
+    const page=await newPage(browser,userscript.replace("async prepare(target)","async prepare(target /* old */)"));
+    await page.goto(`${pass}/contestant#autobench_v2=blocked&receiver=${receiverURL}&target=2`);
+    await page.getByText(/BLOCKED: userscript verification/).waitFor();
+    assert.equal(await page.evaluate(()=>localStorage.getItem("isutori-mock-portal-jobs")),null);
+    assert.equal(await page.locator("select").inputValue(),"");
+    await page.reload();await page.getByText(/BLOCKED: userscript verification/).waitFor();
+    assert.equal(await page.evaluate(()=>localStorage.getItem("isutori-mock-portal-jobs")),null);
+    await page.close();console.log("userscript identity: mismatch blocks preparation before and after reload");
+  }
   {
     const page = await newPage(browser);
     await page.goto(`${pass}/contestant`);
@@ -140,12 +194,12 @@ try {
     assert.equal(result.enqueued, false);
     assert.equal(await page.locator("select").inputValue(), "2");
     assert.equal(await page.evaluate(() => localStorage.getItem("isutori-mock-portal-jobs")), null);
-    assert.equal(await page.evaluate(() => sessionStorage.getItem("isutori-autobench")), null);
+    assert.equal(await page.evaluate(() => sessionStorage.getItem("isutori-autobench-v2")), null);
     assert.equal(receivedRequests, requestsBefore);
 
     const runPage = await page.context().newPage();
     const completed = await resultAfter("after-check", () =>
-      runPage.goto(`${pass}/contestant#autobench=after-check&receiver=${receiverURL}&target=192.168.0.12`));
+      runPage.goto(`${pass}/contestant#autobench_v2=after-check&receiver=${receiverURL}&target=192.168.0.12`));
     assert.equal(completed.passed, true);
     const jobs = await runPage.evaluate(() => JSON.parse(localStorage.getItem("isutori-mock-portal-jobs") ?? "[]"));
     assert.equal(jobs.length, 1);
@@ -162,7 +216,7 @@ try {
     const checked = await checkEnqueue(page, "9");
     assert.match(checked.messages[0], /^prepare: target "9": target "9" matches 0/);
     assert.equal(await page.evaluate(() => localStorage.getItem("isutori-mock-portal-jobs")), null);
-    assert.equal(await page.evaluate(() => sessionStorage.getItem("isutori-autobench")), null);
+    assert.equal(await page.evaluate(() => sessionStorage.getItem("isutori-autobench-v2")), null);
     assert.equal(receivedRequests, requestsBefore);
     await page.close();
     console.log("check enqueue: unknown target does not submit or create a run");
@@ -190,22 +244,22 @@ try {
   }
   {
     const page = await newPage(browser);
-    await page.goto(`${slow}/contestant#autobench=menu-active&receiver=${receiverURL}&target=1`);
+    await page.goto(`${slow}/contestant#autobench_v2=menu-active&receiver=${receiverURL}&target=1`);
     await page.waitForURL(/benchmark_jobs\/\d+$/);
-    await page.waitForFunction(() => JSON.parse(sessionStorage.getItem("isutori-autobench") ?? "null")?.phase === "waiting");
+    await page.waitForFunction(() => JSON.parse(sessionStorage.getItem("isutori-autobench-v2") ?? "null")?.phase === "waiting");
     for (const phase of ["waiting", "unreported"]) {
       if (phase === "unreported") {
         await page.evaluate(() => {
-          const state = JSON.parse(sessionStorage.getItem("isutori-autobench") ?? "null");
+          const state = JSON.parse(sessionStorage.getItem("isutori-autobench-v2") ?? "null");
           state.phase = "unreported";
-          sessionStorage.setItem("isutori-autobench", JSON.stringify(state));
+          sessionStorage.setItem("isutori-autobench-v2", JSON.stringify(state));
         });
       }
-      const before = await page.evaluate(() => sessionStorage.getItem("isutori-autobench"));
+      const before = await page.evaluate(() => sessionStorage.getItem("isutori-autobench-v2"));
       const checked = await checkEnqueue(page, "2");
       assert.equal(checked.prompts, 0);
       assert.match(checked.messages[0], /Open a separate portal tab/);
-      assert.equal(await page.evaluate(() => sessionStorage.getItem("isutori-autobench")), before);
+      assert.equal(await page.evaluate(() => sessionStorage.getItem("isutori-autobench-v2")), before);
       assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("isutori-mock-portal-jobs") ?? "[]").length), 1);
     }
     await page.close();
@@ -213,7 +267,7 @@ try {
   }
   {
     const page = await newPage(browser);
-    const r = await resultAfter("pass", () => page.goto(`${pass}/contestant#autobench=pass&receiver=${receiverURL}&target=2`));
+    const r = await resultAfter("pass", () => page.goto(`${pass}/contestant#autobench_v2=pass&receiver=${receiverURL}&target=2`));
     assert.equal(r.passed, true);
     const jobs = await page.evaluate(() => JSON.parse(localStorage.getItem("isutori-mock-portal-jobs") ?? "[]"));
     assert.equal(jobs[0].targetId, 2);
@@ -221,27 +275,27 @@ try {
     assert.match(r.message ?? "", /score=12345/);
     assert.equal(r.error, undefined);
 
-    const again = await resultAfter("pass-again", () => page.goto(`${pass}/contestant#autobench=pass-again&receiver=${receiverURL}&target=192.168.0.12`));
+    const again = await resultAfter("pass-again", () => page.goto(`${pass}/contestant#autobench_v2=pass-again&receiver=${receiverURL}&target=192.168.0.12`));
     assert.equal(again.passed, true);
     assert.match(page.url(), /benchmark_jobs\/2$/);
   }
   {
     const page = await newPage(browser);
-    const r = await resultAfter("fail", () => page.goto(`${fail}/contestant#autobench=fail&receiver=${receiverURL}&target=1`));
+    const r = await resultAfter("fail", () => page.goto(`${fail}/contestant#autobench_v2=fail&receiver=${receiverURL}&target=1`));
     assert.equal(r.passed, false);
     assert.equal(r.score, 0);
     assert.match(r.message ?? "", /mock portal was configured to fail/);
   }
   {
     const page = await newPage(browser);
-    const r = await resultAfter("errored", () => page.goto(`${error}/contestant#autobench=errored&receiver=${receiverURL}&target=1`));
+    const r = await resultAfter("errored", () => page.goto(`${error}/contestant#autobench_v2=errored&receiver=${receiverURL}&target=1`));
     assert.equal(r.passed, false);
     assert.match(r.message ?? "", /^ERRORED/);
   }
   {
     const page = await newPage(browser);
     const result = await resultAfter("reload", async () => {
-      await page.goto(`${pass}/contestant#autobench=reload&receiver=${receiverURL}&target=1`);
+      await page.goto(`${pass}/contestant#autobench_v2=reload&receiver=${receiverURL}&target=1`);
       await page.waitForURL(/benchmark_jobs\/\d+$/);
       await page.reload();
     });
@@ -254,12 +308,12 @@ try {
     await page.locator("select").selectOption("1");
     await page.getByRole("button", { name: "Enqueue" }).click();
     await page.waitForURL(/benchmark_jobs\/\d+$/);
-    const r = await resultAfter("busy", () => page.goto(`${slow}/contestant#autobench=busy&receiver=${receiverURL}&target=1`));
+    const r = await resultAfter("busy", () => page.goto(`${slow}/contestant#autobench_v2=busy&receiver=${receiverURL}&target=1`));
     assert.match(r.error ?? "", /^enqueue: portal refused to enqueue: .*no other concurrent job/);
   }
   {
     const page = await newPage(browser);
-    const result = await resultAfter("unknown-target", () => page.goto(`${pass}/contestant#autobench=unknown-target&receiver=${receiverURL}&target=9`));
+    const result = await resultAfter("unknown-target", () => page.goto(`${pass}/contestant#autobench_v2=unknown-target&receiver=${receiverURL}&target=9`));
     assert.match(result.error ?? "", /^enqueue: target "9" matches 0 of: 1: 192/);
     assert.equal(await page.evaluate(() => localStorage.getItem("isutori-mock-portal-jobs")), null);
   }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
@@ -17,6 +17,7 @@ interface Entry {
   url: string;
   snapshot: string;
   target?: string;
+  userscript: {expected:string;actual:string;status:string;error?:string};
 }
 const repo = fileURLToPath(new URL("../../", import.meta.url));
 mkdirSync(join(repo, ".claude"), { recursive: true });
@@ -25,7 +26,9 @@ execFileSync("go", ["build", "-o", ".cache/isutori", ".."], { stdio: "inherit" }
 const binary = resolve(".cache/isutori");
 const portal = "http://portal.example";
 const userscript = execFileSync(binary, ["userscript", `${portal}/*`], { encoding: "utf8" });
-const child = spawn(binary, ["inspect", "--listen", "127.0.0.1:0", `${portal}/contestant`], { cwd: work, stdio: ["ignore", "ignore", "pipe"] });
+const scriptPath=join(work,"script.user.js");
+writeFileSync(scriptPath,userscript);
+const child = spawn(binary, ["inspect", "--userscript",scriptPath,"--listen", "127.0.0.1:0", `${portal}/contestant`], { cwd: work, stdio: ["ignore", "ignore", "pipe"] });
 const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
 let browser: Browser | undefined;
 let output = "";
@@ -116,7 +119,8 @@ try {
   assert.equal(await page.evaluate(() => isSecureContext), false);
   await menu(page, "isutori: start recording", connection);
   await until(() => entries().length > 0, "initial snapshot");
-  assert.equal(await page.evaluate(() => sessionStorage.getItem("isutori-autobench")), null);
+  assert.equal(await page.evaluate(() => sessionStorage.getItem("isutori-autobench-v2")), null);
+  assert.equal(entries()[0].userscript.status,"matched");
   const first = html(entries()[0]);
   assert.ok(!first.includes("secret-password") && !first.includes("secret-hidden"));
   assert.ok(!first.includes("<script") && !first.includes("isutori recording:"));
@@ -159,6 +163,13 @@ try {
   await another.close();
   assert.ok(entries().slice(beforeNewTab).every((entry) => entry.reason !== "start"));
 
+  writeFileSync(scriptPath,userscript.replace("async prepare(target)","async prepare(target /* changed reference */)"));
+  await until(()=>entries().some(entry=>entry.userscript.status==="mismatched"),"reference change");
+  await page.getByText(/recording; mismatched/).waitFor();
+  writeFileSync(scriptPath,"incomplete file being edited");
+  await until(()=>entries().some(entry=>entry.userscript.status==="unknown"),"invalid reference");
+  writeFileSync(scriptPath,userscript);
+  await page.getByText(/recording; matched/).waitFor();
   failPosts = true;
   await page.locator("#open").click();
   await page.getByText(/STOPPED: receiver disconnected/).waitFor();
@@ -181,6 +192,22 @@ try {
   await page.evaluate(() => { const options = document.querySelector("#options"); if (options) options.textContent = "x".repeat(2 * 1024 * 1024); });
   await page.getByText(/STOPPED: recording capacity reached/).waitFor();
   assert.equal(await page.evaluate(() => sessionStorage.getItem("isutori-inspect")), null);
+  const sourceless = await context.newPage();
+  await sourceless.goto(`${portal}/contestant`);
+  await sourceless.waitForFunction(() => window.__isutoriMenus?.has("isutori: start recording"));
+  await sourceless.evaluate(() => {
+    const original = Function.prototype.toString;
+    Function.prototype.toString = function (this: { name: string }) {
+      return this.name === "isutoriScript" ? "function isutoriScript() { [native code] }" : original.call(this);
+    };
+  });
+  await menu(sourceless, "isutori: start recording", connection);
+  await sourceless.getByText(/recording; unknown/).waitFor();
+  await sourceless.locator("#open").click();
+  await until(() => entries().some(entry => entry.reason === "click" && entry.userscript.status === "unknown" && entry.userscript.actual === ""), "recording without source");
+  await menu(sourceless, "isutori: stop recording");
+  await sourceless.getByText("isutori recording: stopped; 0 event(s) pending", { exact: true }).waitFor();
+  await sourceless.close();
   console.log(`inspect: OK; ${count} events; artifacts: ${directory}`);
 } finally {
   try { await browser?.close(); }

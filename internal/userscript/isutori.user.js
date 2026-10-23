@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         isutori autobench
 // @namespace    https://github.com/traP-jp/isutori
-// @version      6
-// @description  Enqueues a benchmark when opened by `isutori bench` and reports the result to it.
+// @version      7
+// @description  Records portal DOM changes and runs benchmarks after checking the script identity.
 // @match        http://127.0.0.1:7879/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
@@ -13,13 +13,21 @@
 
 // @ts-check
 
+(function isutoriScript() {
+  /** @typedef {{ expected: string, actual: string, status: string, error?: string }} Verification */
+  function scriptSource() { return Function.prototype.toString.call(isutoriScript); }
+  /** @param {Verification | undefined} value */
+  function verificationText(value) {
+    return `${value?.status}; expected=${value?.expected.slice(0, 19) || "unavailable"} actual=${value?.actual.slice(0, 19) || "unavailable"}${value?.error ? `; ${value.error}` : ""}`;
+  }
+
 (function () {
   "use strict";
   if (typeof window !== "undefined" && window.top !== window.self) return;
 
   const key = "isutori-inspect";
   /** @typedef {{ endpoint: string, token: string }} Connection */
-  /** @typedef {{ page: string, sequence: number, at: string, url: string, reason: string, target: string, visibility: string, html?: string }} InspectionEvent */
+  /** @typedef {{ page: string, sequence: number, at: string, url: string, reason: string, target: string, visibility: string, script_id: string, html?: string }} InspectionEvent */
   /** @type {Connection | undefined} */
   let connection;
   /** @type {MutationObserver | undefined} */
@@ -36,6 +44,8 @@
   let lastHTML = "";
   let page = "";
   let sequence = 0;
+  /** @type {Verification | undefined} */
+  let identity;
   let active = false;
   let stoppedByUser = false;
   const eventTypes = ["click", "input", "change", "visibilitychange"];
@@ -45,7 +55,7 @@
     if (!status) {
       status = document.createElement("div");
       status.setAttribute("data-isutori-inspect", "");
-      status.style.cssText = "position:fixed;right:.5rem;bottom:.5rem;z-index:99999;background:#222;color:#fff;padding:.5rem;font:12px monospace";
+      status.style.cssText = "position:fixed;right:.5rem;bottom:.5rem;z-index:99999;background:#222;color:#fff;padding:.5rem;font:12px monospace;max-width:calc(100vw - 1rem);overflow-wrap:anywhere";
       document.body.append(status);
     }
     status.textContent = `isutori recording: ${message}`;
@@ -71,13 +81,13 @@
     return { endpoint: `${url.origin}/api/inspect`, token: url.hash.slice(1) };
   }
 
-  /** @param {Connection} config @param {InspectionEvent} [event] @returns {Promise<string>} */
-  function request(config, event) {
+  /** @param {Connection} config @param {InspectionEvent | {page: string, source: string}} event @returns {Promise<string>} */
+  function request(config, event, handshake = false) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
-        method: event ? "POST" : "GET", url: config.endpoint,
+        method: "POST", url: config.endpoint + (handshake ? "/start" : ""),
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.token}` },
-        data: event ? JSON.stringify(event) : undefined,
+        data: JSON.stringify(event),
         timeout: 10000,
         onload: (response) => response.status >= 200 && response.status < 300 ? resolve(response.responseText) : reject(new Error(`${response.status}: ${response.responseText}`)),
         onerror: () => reject(new Error("receiver disconnected")),
@@ -118,10 +128,10 @@
     try {
       while (pending.length) {
         const event = pending[0];
-        await request(connection, event);
+        identity = JSON.parse(await request(connection, event));
         pending.shift();
         pendingBytes -= new TextEncoder().encode(JSON.stringify(event)).length;
-        if (active) show(`recording; saved ${event.sequence}; pending ${pending.length}`);
+        if (active) show(`recording; ${verificationText(identity)}; saved ${event.sequence}; pending ${pending.length}`);
         else if (stoppedByUser) show(`stopped; ${pending.length} event(s) pending`);
       }
     } catch (e) {
@@ -137,7 +147,7 @@
     try {
       const html = snapshot();
       /** @type {InspectionEvent} */
-      const event = { page, sequence: ++sequence, at: new Date().toISOString(), url: location.origin + location.pathname, reason, target, visibility: document.visibilityState };
+      const event = { page, sequence: ++sequence, at: new Date().toISOString(), url: location.origin + location.pathname, reason, target, visibility: document.visibilityState, script_id: identity?.actual ?? "" };
       if (html !== lastHTML) event.html = html;
       const bytes = new TextEncoder().encode(JSON.stringify(event)).length;
       if (bytes > 2 * 1024 * 1024 || pending.length >= 100 || pendingBytes + bytes > 8 * 1024 * 1024) {
@@ -173,20 +183,22 @@
 
   /** @param {Connection} config */
   async function start(config) {
-    const info = JSON.parse(await request(config));
+    const newPage = [...crypto.getRandomValues(new Uint8Array(16))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const info = JSON.parse(await request(config, {page: newPage, source: scriptSource()}, true));
     if (info.origin !== location.origin) throw new Error(`Expected portal origin ${info.origin}, got ${location.origin}`);
     connection = config;
     if (pending.length) {
       await flush();
       if (pending.length) throw new Error("Previous events could not be saved; receiver must be restored before restarting.");
     }
-    page = [...crypto.getRandomValues(new Uint8Array(16))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    page = newPage;
+    identity = info.userscript;
     sequence = 0;
     lastHTML = "";
     sessionStorage.setItem(key, JSON.stringify({ ...config, resume: false }));
     active = true;
     stoppedByUser = false;
-    show("recording");
+    show(`recording; ${verificationText(identity)}`);
     capture("start");
     if (!active) return;
     observer = new MutationObserver((records) => {
@@ -359,7 +371,7 @@
 
   /** @typedef {{ passed: boolean, score: number, message: string }} BenchResult */
 
-  /** @typedef {BenchResult | { error: string }} Report */
+  /** @typedef {(BenchResult | { error: string }) & {userscript?: Verification}} Report */
 
   /**
    * @typedef {object} Run
@@ -377,7 +389,9 @@
   const pollMs = 2000;
   const enqueueTimeoutMs = 60 * 1000;
   const resultTimeoutMs = 20 * 60 * 1000;
-  const storageKey = "isutori-autobench";
+  const storageKey = "isutori-autobench-v2";
+  /** @type {Verification | undefined} */
+  let verified;
 
   /**
    * @template T
@@ -418,7 +432,7 @@
   /** @returns {State | null} */
   function stateFromHash() {
     const params = new URLSearchParams(location.hash.slice(1));
-    const runId = params.get("autobench");
+    const runId = params.get("autobench_v2");
     const receiver = params.get("receiver");
     const target = params.get("target");
     if (!runId || !receiver || !target) return null;
@@ -430,18 +444,18 @@
 
   /**
    * @param {State} state
-   * @param {Report} body
-   * @returns {Promise<void>}
+   * @param {Report | {source: string}} body
+   * @returns {Promise<string>}
    */
-  function post(state, body) {
+  function post(state, body, path = "/api/result") {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method: "POST",
-        url: `${state.receiver}/api/result`,
+        url: `${state.receiver}${path}`,
         headers: { "Content-Type": "application/json" },
         data: JSON.stringify({ run_id: state.runId, ...body }),
         onload: (res) =>
-          res.status >= 200 && res.status < 300 ? resolve() : reject(new Error(`${res.status} ${res.responseText}`)),
+          res.status >= 200 && res.status < 300 ? resolve(res.responseText) : reject(new Error(`${res.status} ${res.responseText}`)),
         onerror: () => reject(new Error(`cannot reach ${state.receiver}`)),
         ontimeout: () => reject(new Error(`timed out posting to ${state.receiver}`)),
         timeout: 10000,
@@ -455,7 +469,7 @@
    */
   async function report(state, body) {
     try {
-      await post(state, body);
+      await post(state, {...body, userscript: verified});
       saveState({ ...state, phase: "done", note: "error" in body ? body.error : `passed=${body.passed} score=${body.score}` });
     } catch (e) {
       saveState({ ...state, phase: "unreported", note: `could not report to isutori: ${e.message}` });
@@ -464,8 +478,20 @@
 
   /** @param {State} state */
   async function run(state) {
+    if (state.phase === "done" || state.phase === "unreported") { show(state); return; }
+    if (state.phase === "enqueue") saveState(state); else show(state);
+    try {
+      verified = JSON.parse(await post(state, {source: scriptSource()}, "/api/userscript"));
+      if (verified?.status !== "matched") throw new Error(verificationText(verified));
+      if (state.note) {
+        state = {...state, note: undefined};
+        saveState(state);
+      }
+    } catch (e) {
+      saveState({...state, note: `BLOCKED: userscript verification: ${e.message}; use the manual result form or install the expected script and reload`});
+      return;
+    }
     if (state.phase === "enqueue") {
-      saveState(state);
       try {
         const prepared = await adapter.prepare(state.target);
         saveState({ ...state, phase: "enqueuing" });
@@ -513,7 +539,7 @@
       badge.setAttribute("data-isutori-badge", "");
       badge.style.cssText =
         "position:fixed;left:.5rem;bottom:.5rem;z-index:99999;padding:.25rem .5rem;" +
-        "background:#222;color:#fff;font:12px monospace;border-radius:4px;white-space:pre";
+        "background:#222;color:#fff;font:12px monospace;border-radius:4px;white-space:pre-wrap;max-width:calc(100vw - 1rem);overflow-wrap:anywhere";
       document.body.append(badge);
     }
     badge.textContent = `isutori ${state.runId}: ${state.phase}${state.note ? `\n${state.note}` : ""}`;
@@ -549,4 +575,6 @@
 
   const state = stateFromHash() ?? loadState();
   if (state) run(state);
+})();
+
 })();

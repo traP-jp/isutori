@@ -16,6 +16,7 @@ import (
 
 	"github.com/traP-jp/isutori/internal/config"
 	"github.com/traP-jp/isutori/internal/queue"
+	"github.com/traP-jp/isutori/internal/userscript"
 )
 
 type shellFunc func(ctx context.Context) error
@@ -110,7 +111,7 @@ func TestReadBenchResult(t *testing.T) {
 		if (err != nil) != wantErr {
 			t.Errorf("%s: got error %v, want error %v", body, err, wantErr)
 		}
-		if body == `{"passed":true,"score":42,"message":"ok"}` && *res != (BenchResult{true, 42, "ok"}) {
+		if body == `{"passed":true,"score":42,"message":"ok"}` && *res != (BenchResult{Passed: true, Score: 42, Message: "ok"}) {
 			t.Errorf("%s: got %+v", body, *res)
 		}
 	}
@@ -194,7 +195,8 @@ publish = 'test "$ISUTORI_APP_COMMIT" = app && test "$ISUTORI_OPS_COMMIT" = ops 
 	if err := writeJSON(filepath.Join(dir, "run.json"), saved); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSON(filepath.Join(dir, benchResultFile), BenchResult{Passed: true, Score: 435581}); err != nil {
+	proof := userscript.Verification{Expected: "sha256:expected", Actual: "sha256:expected", Status: "matched"}
+	if err := writeJSON(filepath.Join(dir, benchResultFile), BenchResult{Passed: true, Score: 435581, Userscript: proof}); err != nil {
 		t.Fatal(err)
 	}
 	lock, err := lockRun(dir)
@@ -216,7 +218,7 @@ publish = 'test "$ISUTORI_APP_COMMIT" = app && test "$ISUTORI_OPS_COMMIT" = ops 
 		if err != nil {
 			t.Fatal(err)
 		}
-		if summary.Bench.Score != 435581 || summary.Error != saved.Error || summary.Stages[0].Status != "unknown" {
+		if summary.Bench.Score != 435581 || summary.Bench.Userscript != proof || summary.Error != saved.Error || summary.Stages[0].Status != "unknown" {
 			t.Fatalf("lost the original result or failure: %+v", summary)
 		}
 	}
@@ -232,7 +234,7 @@ publish = 'test "$ISUTORI_APP_COMMIT" = app && test "$ISUTORI_OPS_COMMIT" = ops 
 	if err != nil || len(files) != 1 {
 		t.Fatalf("retry duplicated the shared record: %v, %v", files, err)
 	}
-	if shared.RunID != saved.RunID || shared.Bench == nil || shared.Bench.Score != 435581 {
+	if shared.RunID != saved.RunID || shared.Bench == nil || shared.Bench.Score != 435581 || shared.Bench.Userscript != proof {
 		t.Fatalf("shared result: %+v", shared)
 	}
 	if err := SaveBenchResult(filepath.Join(dir, benchResultFile), BenchResult{Passed: true, Score: 999}); err != nil {
