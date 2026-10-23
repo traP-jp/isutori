@@ -64,35 +64,34 @@ type run struct {
 }
 
 // Run deploys opts.Ref and benchmarks it at the head of the queue.
-func Run(ctx context.Context, opts Options) (*Summary, error) {
+func Run(ctx context.Context, opts Options) (summary *Summary, err error) {
 	root := opts.RepoRoot
-	if _, err := git(ctx, root, "fetch", "--quiet", "--prune", "origin"); err != nil {
-		return nil, err
-	}
-	appCommit, err := git(ctx, root, "rev-parse", "--verify", opts.Ref+"^{commit}")
-	if err != nil {
-		return nil, err
-	}
-	if name, err := git(ctx, root, "rev-parse", "--abbrev-ref", opts.Ref); err == nil && name != "" {
-		opts.Ref = name
-	}
-	if remotes, err := git(ctx, root, "branch", "--remotes", "--contains", appCommit, "--list", "origin/*"); err != nil {
-		return nil, err
-	} else if remotes == "" {
-		return nil, fmt.Errorf("%s (%s) is not on origin; push it first so the servers can fetch it", opts.Ref, appCommit)
-	}
-	local, err := config.Load(filepath.Join(root, config.FileName))
-	if err != nil {
-		return nil, err
-	}
-	opsCommit, err := git(ctx, root, "rev-parse", "--verify", local.Ops.Ref+"^{commit}")
-	if err != nil {
-		return nil, err
-	}
-
 	ticketID := rand.Text()[:8]
 	runID := time.Now().Format("20060102T150405") + "-" + ticketID
 	runDir := filepath.Join(root, ".isutori", "runs", runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		return nil, err
+	}
+	logFile, err := os.Create(filepath.Join(runDir, "run.log"))
+	if err != nil {
+		return nil, err
+	}
+	defer logFile.Close()
+	defer func() {
+		if err != nil && summary == nil {
+			fmt.Fprintf(logFile, "FAILED preparation: %v\n", err)
+			err = fmt.Errorf("prepare run (log: %s): %w", filepath.Join(runDir, "run.log"), err)
+		}
+	}()
+	out := io.MultiWriter(opts.Log, logFile)
+	prepLog := log.New(out, "isutori: ", log.Ltime)
+	prepLog.Printf("preparing run %s in %s", runID, runDir)
+	defer cleanupRefs(root, runID, prepLog)
+	appCommit, opsCommit, ref, err := prepareRefs(ctx, root, runID, opts.Ref, prepLog)
+	if err != nil {
+		return nil, err
+	}
+	opts.Ref = ref
 	opsDir := filepath.Join(runDir, "ops")
 	if err := os.MkdirAll(opsDir, 0o755); err != nil {
 		return nil, err
@@ -107,22 +106,16 @@ func Run(ctx context.Context, opts Options) (*Summary, error) {
 	}
 	cfgPath := filepath.Join(opsDir, config.FileName)
 	if _, err := os.Stat(cfgPath); errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("%s is not on %s; commit it and push it there first", config.FileName, local.Ops.Ref)
+		return nil, fmt.Errorf("%s is not on %s; commit it and push it there first", config.FileName, opsCommit)
 	}
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		return nil, fmt.Errorf("%s at ops ref %s: %w", config.FileName, local.Ops.Ref, err)
+		return nil, fmt.Errorf("%s at ops ref %s: %w", config.FileName, opsCommit, err)
 	}
 	binDir, err := linkSelf(runDir)
 	if err != nil {
 		return nil, err
 	}
-	logFile, err := os.Create(filepath.Join(runDir, "run.log"))
-	if err != nil {
-		return nil, err
-	}
-	defer logFile.Close()
-	out := io.MultiWriter(opts.Log, logFile)
 
 	r := &run{
 		cfg:    cfg,
