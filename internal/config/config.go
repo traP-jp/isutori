@@ -102,7 +102,8 @@ host = "s1"           # SSH の接続先。キューの状態はこのホスト�
 [ops]
 ref = "origin/main"   # フックと isutori.toml はこの ref から取り出して使う
 
-# Hooks run via sh -c. Failures skip to cleanup, except collect/analyze still try publish.
+# フックは sh -c で実行する。失敗したら残りを飛ばして cleanup へ進む
+# collect/analyze の失敗時は、取得済みの結果を共有するために publish を試す
 [hooks]
 # timeout = "10m"           # bench 以外のフック 1 つあたりの上限
 # bench_timeout = "20m"     # bench の上限。ポータルの順番待ちも含む
