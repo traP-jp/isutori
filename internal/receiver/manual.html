@@ -24,7 +24,7 @@ textarea { width: 100%; height: 16rem; }
 document.getElementById("f").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = e.target;
-  const res = await fetch("/api/result", {
+  const res = await fetch("/api/manual-result", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

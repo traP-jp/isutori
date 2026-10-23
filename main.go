@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/traP-jp/isutori/internal/config"
+	"github.com/traP-jp/isutori/internal/inspect"
 	"github.com/traP-jp/isutori/internal/mockportal"
 	"github.com/traP-jp/isutori/internal/queue"
 	"github.com/traP-jp/isutori/internal/receiver"
@@ -32,12 +33,16 @@ const usage = `usage: isutori <command> [arguments]
 
   bench [--ref REF] [--mode measure|final] [--requester NAME]
       deploy REF (HEAD by default) and benchmark it when its turn comes
+  publish RUN_DIR
+      retry sharing a saved benchmark result without deploying or benchmarking
   guard
       fail unless this run is at the head of the queue; call it first in deploy
   receive [--listen ADDR]
       from hooks.bench: wait for a result entered by hand
-  autobench [--listen ADDR] [--open-command CMD] PORTAL_URL TARGET
+  autobench [--listen ADDR] [--open-command CMD] [--userscript FILE] PORTAL_URL TARGET
       from hooks.bench: let the userscript run the benchmark against TARGET
+  inspect [--listen ADDR] [--userscript FILE] PORTAL_URL
+      record portal DOM changes locally while setting up the userscript
   status [--json]
       show the queue and what was deployed last
   queue clear
@@ -92,12 +97,25 @@ func dispatch(ctx, abort context.Context, args []string) (int, error) {
 		return 0, nil
 	case "bench":
 		return bench(ctx, abort, rest)
+	case "publish":
+		if len(rest) != 1 {
+			return 1, errors.New("usage: isutori publish RUN_DIR")
+		}
+		summary, err := runner.Publish(ctx, rest[0], os.Stderr)
+		if summary != nil {
+			if encodeErr := json.NewEncoder(os.Stdout).Encode(summary); encodeErr != nil {
+				err = errors.Join(err, encodeErr)
+			}
+		}
+		return exitCode(err)
 	case "guard":
 		return exitCode(guard(ctx))
 	case "receive":
 		return exitCode(receive(ctx, rest))
 	case "autobench":
 		return exitCode(autobench(ctx, rest))
+	case "inspect":
+		return exitCode(inspectPortal(ctx, rest))
 	case "status":
 		return exitCode(status(ctx, rest))
 	case "queue":
@@ -195,22 +213,23 @@ func receive(ctx context.Context, args []string) error {
 	if fs.NArg() != 0 {
 		return errors.New("usage: isutori receive [--listen ADDR]")
 	}
-	return awaitResult(ctx, *listen, func(string) {})
+	return awaitResult(ctx, *listen, "", func(string) {})
 }
 
 func autobench(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("autobench", flag.ContinueOnError)
 	listen := fs.String("listen", defaultListen, "address to receive the result on")
+	scriptPath := fs.String("userscript", userscript.DefaultPath, "userscript file in the saved ops directory")
 	open := fs.String("open-command", "", "command that opens the portal; the first of wslview, xdg-open and open by default")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 2 {
-		return errors.New("usage: isutori autobench [--listen ADDR] [--open-command CMD] PORTAL_URL TARGET")
+		return errors.New("usage: isutori autobench [--listen ADDR] [--open-command CMD] [--userscript FILE] PORTAL_URL TARGET")
 	}
 	portal, target := fs.Arg(0), fs.Arg(1)
-	return awaitResult(ctx, *listen, func(runID string) {
-		u := portal + "#" + url.Values{"autobench": {runID}, "receiver": {"http://" + *listen}, "target": {target}}.Encode()
+	return awaitResult(ctx, *listen, *scriptPath, func(runID string) {
+		u := portal + "#" + url.Values{"autobench_v2": {runID}, "receiver": {"http://" + *listen}, "target": {target}}.Encode()
 		fmt.Fprintf(os.Stderr, "isutori: opening %s\n", u)
 		if err := openBrowser(*open, u); err != nil {
 			fmt.Fprintf(os.Stderr, "isutori: WARNING: %v; open the URL above yourself\n", err)
@@ -220,7 +239,7 @@ func autobench(ctx context.Context, args []string) error {
 
 // awaitResult receives the result of the current run and writes it to
 // $ISUTORI_BENCH_RESULT. listening runs once the receiver is up.
-func awaitResult(ctx context.Context, listen string, listening func(runID string)) error {
+func awaitResult(ctx context.Context, listen, scriptPath string, listening func(runID string)) error {
 	runID, out := os.Getenv("ISUTORI_RUN_ID"), os.Getenv("ISUTORI_BENCH_RESULT")
 	if runID == "" || out == "" {
 		return errors.New("not running as hooks.bench of `isutori bench`")
@@ -230,19 +249,23 @@ func awaitResult(ctx context.Context, listen string, listening func(runID string
 		return fmt.Errorf("%w (another isutori bench may be running on this machine)", err)
 	}
 	fmt.Fprintf(os.Stderr, "isutori: waiting for the result; enter it by hand at http://%s/ if needed\n", listen)
+	if scriptPath != "" {
+		fmt.Fprintln(os.Stderr, "isutori: waiting for a verified userscript; manual input remains available")
+	}
 	listening(runID)
-	res, err := receiver.Wait(ctx, ln, runID)
+	res, err := receiver.Wait(ctx, ln, runID, scriptPath, os.Stderr, func(res receiver.Result) error {
+		if res.Error != "" {
+			return nil
+		}
+		return runner.SaveBenchResult(out, runner.BenchResult{Passed: res.Passed, Score: res.Score, Message: res.Message, Userscript: res.Userscript})
+	})
 	if err != nil {
 		return err
 	}
 	if res.Error != "" {
 		return fmt.Errorf("userscript: %s", res.Error)
 	}
-	b, err := json.Marshal(runner.BenchResult{Passed: res.Passed, Score: res.Score, Message: res.Message})
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(out, b, 0o644)
+	return nil
 }
 
 func openBrowser(command, u string) error {
@@ -420,4 +443,34 @@ func defaultRequester(ctx context.Context) string {
 		}
 	}
 	return os.Getenv("USER")
+}
+
+func inspectPortal(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
+	scriptPath := fs.String("userscript", userscript.DefaultPath, "working userscript file to compare against")
+	addr := fs.String("listen", "127.0.0.1:7877", "loopback address for portal inspection")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("usage: isutori inspect [--listen ADDR] [--userscript FILE] PORTAL_URL")
+	}
+	ln, err := inspect.Listen(*addr)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+	root, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	session, err := inspect.New(root, fs.Arg(0), *scriptPath)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	fmt.Fprintf(os.Stderr, "isutori: inspection directory: %s\n", session.Dir)
+	fmt.Fprintf(os.Stderr, "isutori: open the portal and choose 'isutori: start recording'; paste this connection:\nhttp://%s/#%s\n", ln.Addr(), session.Token)
+	fmt.Fprintln(os.Stderr, "isutori: Ctrl-C stops the receiver; existing recordings are kept")
+	return inspect.Serve(ctx, ln, session)
 }

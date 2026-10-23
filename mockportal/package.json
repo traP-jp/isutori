@@ -4,7 +4,8 @@
   "scripts": {
     "build": "node build.ts",
     "typecheck": "node build.ts --fetch-only && tsc --noEmit",
-    "test": "node test/userscript.ts"
+    "test": "node test/preflight.ts && node test/userscript.ts && node test/inspect.ts && node test/tabs.ts",
+    "test:unit": "node test/preflight.ts"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.0.0",
