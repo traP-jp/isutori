@@ -32,6 +32,8 @@ const usage = `usage: isutori <command> [arguments]
 
   bench [--ref REF] [--mode measure|final] [--requester NAME]
       deploy REF (HEAD by default) and benchmark it when its turn comes
+  publish RUN_DIR
+      retry sharing a saved benchmark result without deploying or benchmarking
   guard
       fail unless this run is at the head of the queue; call it first in deploy
   receive [--listen ADDR]
@@ -92,6 +94,17 @@ func dispatch(ctx, abort context.Context, args []string) (int, error) {
 		return 0, nil
 	case "bench":
 		return bench(ctx, abort, rest)
+	case "publish":
+		if len(rest) != 1 {
+			return 1, errors.New("usage: isutori publish RUN_DIR")
+		}
+		summary, err := runner.Publish(ctx, rest[0], os.Stderr)
+		if summary != nil {
+			if encodeErr := json.NewEncoder(os.Stdout).Encode(summary); encodeErr != nil {
+				err = errors.Join(err, encodeErr)
+			}
+		}
+		return exitCode(err)
 	case "guard":
 		return exitCode(guard(ctx))
 	case "receive":
@@ -231,18 +244,19 @@ func awaitResult(ctx context.Context, listen string, listening func(runID string
 	}
 	fmt.Fprintf(os.Stderr, "isutori: waiting for the result; enter it by hand at http://%s/ if needed\n", listen)
 	listening(runID)
-	res, err := receiver.Wait(ctx, ln, runID)
+	res, err := receiver.Wait(ctx, ln, runID, func(res receiver.Result) error {
+		if res.Error != "" {
+			return nil
+		}
+		return runner.SaveBenchResult(out, runner.BenchResult{Passed: res.Passed, Score: res.Score, Message: res.Message})
+	})
 	if err != nil {
 		return err
 	}
 	if res.Error != "" {
 		return fmt.Errorf("userscript: %s", res.Error)
 	}
-	b, err := json.Marshal(runner.BenchResult{Passed: res.Passed, Score: res.Score, Message: res.Message})
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(out, b, 0o644)
+	return nil
 }
 
 func openBrowser(command, u string) error {

@@ -37,6 +37,7 @@ type Options struct {
 
 type Stage struct {
 	Name    string  `json:"name"`
+	Status  string  `json:"status,omitempty"`
 	Seconds float64 `json:"seconds"`
 	Error   string  `json:"error,omitempty"`
 }
@@ -61,8 +62,7 @@ type run struct {
 	summary *Summary
 }
 
-// Run deploys opts.Ref and benchmarks it once its ticket reaches the head of
-// the queue. The returned Summary is non-nil whenever a run directory exists.
+// Run deploys opts.Ref and benchmarks it at the head of the queue.
 func Run(ctx context.Context, opts Options) (*Summary, error) {
 	root := opts.RepoRoot
 	if _, err := git(ctx, root, "fetch", "--quiet", "--prune", "origin"); err != nil {
@@ -96,6 +96,11 @@ func Run(ctx context.Context, opts Options) (*Summary, error) {
 	if err := os.MkdirAll(opsDir, 0o755); err != nil {
 		return nil, err
 	}
+	lock, err := lockRun(runDir)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
 	if err := extract(ctx, root, opsCommit, opsDir); err != nil {
 		return nil, err
 	}
@@ -122,21 +127,8 @@ func Run(ctx context.Context, opts Options) (*Summary, error) {
 		cfg:    cfg,
 		q:      queue.New(cfg.Queue),
 		opsDir: opsDir,
-		env: append(os.Environ(),
-			"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
-			"ISUTORI_RUN_ID="+runID,
-			"ISUTORI_RUN_DIR="+runDir,
-			"ISUTORI_BENCH_RESULT="+filepath.Join(runDir, benchResultFile),
-			"ISUTORI_REPO="+root,
-			"ISUTORI_CONFIG="+cfgPath,
-			"ISUTORI_APP_COMMIT="+appCommit,
-			"ISUTORI_OPS_COMMIT="+opsCommit,
-			"ISUTORI_MODE="+opts.Mode,
-			"ISUTORI_REQUESTER="+opts.Requester,
-			"ISUTORI_TICKET_ID="+ticketID,
-		),
-		log: log.New(out, "isutori: ", log.Ltime),
-		out: out,
+		log:    log.New(out, "isutori: ", log.Ltime),
+		out:    out,
 		summary: &Summary{
 			RunID:  runID,
 			RunDir: runDir,
@@ -151,12 +143,15 @@ func Run(ctx context.Context, opts Options) (*Summary, error) {
 			OpsCommit: opsCommit,
 		},
 	}
+	r.env = environment(r.summary, root, cfgPath, binDir)
+	if err := r.writeSummary(); err != nil {
+		return r.summary, err
+	}
 	err = r.execute(ctx, opts.Abort)
 	if err != nil {
 		r.summary.Error = err.Error()
 	}
-	r.writeSummary()
-	return r.summary, err
+	return r.summary, errors.Join(err, r.writeSummary())
 }
 
 var errAborted = errors.New("aborted by a second interrupt")
@@ -205,15 +200,16 @@ func (r *run) execute(parent, abort context.Context) error {
 		{"record", r.recordDeployed(state)},
 		{"prepare", r.hook(h.Prepare)},
 		{"bench", r.bench},
-		{"collect", r.hook(h.Collect)},
-		{"analyze", r.hook(h.Analyze)},
-		{"publish", r.hook(h.Publish)},
 	}
 	var runErr error
 	for _, s := range steps {
 		if runErr = r.stage(ctx, s.name, s.fn); runErr != nil {
 			break
 		}
+	}
+
+	if runErr == nil {
+		runErr = r.finish(ctx)
 	}
 
 	// A stage may have failed because the ticket is gone, e.g. guard in deploy;
@@ -231,6 +227,25 @@ func (r *run) execute(parent, abort context.Context) error {
 		return errors.Join(runErr, cause)
 	}
 	return errors.Join(runErr, r.stage(leaseCtx, "cleanup", r.hook(h.Cleanup)))
+}
+
+func (r *run) finish(ctx context.Context) error {
+	var runErr error
+	for _, step := range []struct{ name, command string }{
+		{"collect", r.cfg.Hooks.Collect},
+		{"analyze", r.cfg.Hooks.Analyze},
+	} {
+		if runErr = r.stage(ctx, step.name, r.hook(step.command)); runErr != nil {
+			break
+		}
+	}
+	if ctx.Err() != nil {
+		return errors.Join(runErr, context.Cause(ctx))
+	}
+	if runErr != nil {
+		r.summary.Error = runErr.Error()
+	}
+	return errors.Join(runErr, r.stage(ctx, "publish", r.hook(r.cfg.Hooks.Publish)))
 }
 
 var errLeaseUnconfirmed = errors.New("lease renewals kept failing; the queue host may have handed the servers to the next ticket")
@@ -307,20 +322,41 @@ func (r *run) waitHead(ctx context.Context, name string) error {
 
 func (r *run) stage(ctx context.Context, name string, fn func(context.Context) error) error {
 	r.log.Printf("== %s", name)
+	index := len(r.summary.Stages)
+	r.summary.Stages = append(r.summary.Stages, Stage{Name: name, Status: "running"})
+	if fn == nil {
+		r.summary.Stages[index].Status = "skipped"
+		return r.writeSummary()
+	}
+	saveErr := r.writeSummary()
+	if saveErr != nil {
+		saveErr = fmt.Errorf("before %s: %w", name, saveErr)
+		// Local recording failures must not prevent server cleanup.
+		if name != "cleanup" {
+			return saveErr
+		}
+	}
 	start := time.Now()
 	err := fn(ctx)
-	s := Stage{Name: name, Seconds: time.Since(start).Seconds()}
+	s := &r.summary.Stages[index]
+	s.Seconds = time.Since(start).Seconds()
+	s.Status = "succeeded"
 	if err != nil {
+		s.Status = "failed"
 		s.Error = err.Error()
 		err = fmt.Errorf("%s: %w", name, err)
 		r.log.Printf("FAILED %v", err)
 	}
-	r.summary.Stages = append(r.summary.Stages, s)
-	r.writeSummary()
-	return err
+	if endErr := r.writeSummary(); endErr != nil {
+		err = errors.Join(err, fmt.Errorf("after %s: %w", name, endErr))
+	}
+	return errors.Join(saveErr, err)
 }
 
 func (r *run) hook(cmdline string) func(context.Context) error {
+	if cmdline == "" {
+		return nil
+	}
 	return func(ctx context.Context) error {
 		return r.sh(ctx, cmdline, "hooks.timeout", r.cfg.Hooks.Timeout)
 	}
@@ -411,6 +447,11 @@ type BenchResult struct {
 	Message string `json:"message"`
 }
 
+// SaveBenchResult durably replaces the result file before returning success.
+func SaveBenchResult(path string, result BenchResult) error {
+	return writeJSON(path, result)
+}
+
 const benchResultFile = "bench.json"
 
 func readBenchResult(path string) (*BenchResult, error) {
@@ -431,6 +472,9 @@ func readBenchResult(path string) (*BenchResult, error) {
 	if err := dec.Decode(&v); err != nil {
 		return nil, fmt.Errorf("$ISUTORI_BENCH_RESULT: %w", err)
 	}
+	if err := dec.Decode(new(any)); err != io.EOF {
+		return nil, errors.New("$ISUTORI_BENCH_RESULT: expected a single JSON object")
+	}
 	if v.Passed == nil {
 		return nil, errors.New(`$ISUTORI_BENCH_RESULT: "passed" is missing`)
 	}
@@ -438,10 +482,8 @@ func readBenchResult(path string) (*BenchResult, error) {
 	return &v.BenchResult, nil
 }
 
-func (r *run) writeSummary() {
-	if err := writeJSON(filepath.Join(r.summary.RunDir, "run.json"), r.summary); err != nil {
-		r.log.Printf("WARNING: %v", err)
-	}
+func (r *run) writeSummary() error {
+	return writeJSON(filepath.Join(r.summary.RunDir, "run.json"), r.summary)
 }
 
 func writeJSON(path string, v any) error {
@@ -449,11 +491,131 @@ func writeJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+	f, err := os.CreateTemp(filepath.Dir(path), ".run-*.json")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(f.Name(), path); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
 
-// linkSelf makes `isutori` on PATH refer to this very binary inside hooks,
-// which matters when isutori is invoked through `go run`.
+func environment(s *Summary, root, cfgPath, binDir string) []string {
+	return append(os.Environ(),
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"ISUTORI_RUN_ID="+s.RunID,
+		"ISUTORI_RUN_DIR="+s.RunDir,
+		"ISUTORI_BENCH_RESULT="+filepath.Join(s.RunDir, benchResultFile),
+		"ISUTORI_REPO="+root,
+		"ISUTORI_CONFIG="+cfgPath,
+		"ISUTORI_APP_COMMIT="+s.Ticket.AppCommit,
+		"ISUTORI_OPS_COMMIT="+s.OpsCommit,
+		"ISUTORI_MODE="+s.Ticket.Mode,
+		"ISUTORI_REQUESTER="+s.Ticket.Requester,
+		"ISUTORI_TICKET_ID="+s.Ticket.ID,
+	)
+}
+
+// Publish retries only the saved publish hook, without acquiring a server lease.
+func Publish(ctx context.Context, runDir string, out io.Writer) (*Summary, error) {
+	runDir, err := filepath.Abs(runDir)
+	if err != nil {
+		return nil, err
+	}
+	lock, err := lockRun(runDir)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
+	b, err := os.ReadFile(filepath.Join(runDir, "run.json"))
+	if err != nil {
+		return nil, err
+	}
+	var summary Summary
+	if err := json.Unmarshal(b, &summary); err != nil {
+		return nil, err
+	}
+	if summary.RunDir != runDir || summary.RunID != filepath.Base(runDir) ||
+		filepath.Base(filepath.Dir(runDir)) != "runs" ||
+		filepath.Base(filepath.Dir(filepath.Dir(runDir))) != ".isutori" {
+		return nil, errors.New("run directory does not match run.json; use the original directory")
+	}
+	result, err := readBenchResult(filepath.Join(runDir, benchResultFile))
+	if err != nil {
+		return nil, err
+	}
+	if summary.Bench != nil && *summary.Bench != *result {
+		return nil, errors.New("bench.json differs from the saved benchmark result")
+	}
+	summary.Bench = result
+	for i := range summary.Stages {
+		if summary.Stages[i].Status == "running" {
+			summary.Stages[i].Status = "unknown"
+		}
+	}
+	opsDir := filepath.Join(runDir, "ops")
+	cfgPath := filepath.Join(opsDir, config.FileName)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Hooks.Publish == "" {
+		return nil, errors.New("no publish hook configured in the saved run")
+	}
+	binRoot, err := os.MkdirTemp(runDir, ".publish-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(binRoot)
+	binDir, err := linkSelf(binRoot)
+	if err != nil {
+		return nil, err
+	}
+	logFile, err := os.OpenFile(filepath.Join(runDir, "run.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	defer logFile.Close()
+	out = io.MultiWriter(out, logFile)
+	r := &run{
+		cfg: cfg, opsDir: opsDir, summary: &summary, out: out,
+		env: environment(&summary, filepath.Dir(filepath.Dir(filepath.Dir(runDir))), cfgPath, binDir),
+		log: log.New(out, "isutori: ", log.Ltime),
+	}
+	r.env = append(r.env, "ISUTORI_TICKET_ID=")
+	return &summary, r.stage(ctx, "publish", r.hook(cfg.Hooks.Publish))
+}
+
+func lockRun(runDir string) (*os.File, error) {
+	f, err := os.OpenFile(filepath.Join(runDir, "run.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("run is already in use: %w", err)
+	}
+	return f, nil
+}
+
+// Hooks need this executable on PATH when invoked through `go run`.
 func linkSelf(runDir string) (string, error) {
 	self, err := os.Executable()
 	if err != nil {

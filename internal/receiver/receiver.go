@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -28,10 +29,10 @@ var manualHTML string
 var manualTmpl = template.Must(template.New("manual").Parse(manualHTML))
 
 // Wait serves the result endpoint on ln until a result for runID arrives, then
-// closes ln.
-func Wait(ctx context.Context, ln net.Listener, runID string) (Result, error) {
+// closes ln. It calls save before acknowledging receipt; a failed save permits retry.
+func Wait(ctx context.Context, ln net.Listener, runID string, save func(Result) error) (Result, error) {
 	results := make(chan Result, 1)
-	srv := &http.Server{Handler: handler(runID, results), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Handler: handler(runID, results, save), ReadHeaderTimeout: 10 * time.Second}
 	go srv.Serve(ln)
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -47,7 +48,9 @@ func Wait(ctx context.Context, ln net.Listener, runID string) (Result, error) {
 	}
 }
 
-func handler(runID string, results chan<- Result) http.Handler {
+func handler(runID string, results chan<- Result, save func(Result) error) http.Handler {
+	var mu sync.Mutex
+	accepted := false
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		manualTmpl.Execute(w, map[string]string{"RunID": runID})
@@ -71,13 +74,20 @@ func handler(runID string, results chan<- Result) http.Handler {
 			http.Error(w, fmt.Sprintf("run_id mismatch: waiting for %q", runID), http.StatusConflict)
 			return
 		}
-		res.ReceivedAt = time.Now()
-		select {
-		case results <- res:
-			w.WriteHeader(http.StatusNoContent)
-		default:
+		mu.Lock()
+		defer mu.Unlock()
+		if accepted {
 			http.Error(w, "result already received", http.StatusConflict)
+			return
 		}
+		res.ReceivedAt = time.Now()
+		if err := save(res); err != nil {
+			http.Error(w, "failed to save result: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		accepted = true
+		results <- res
+		w.WriteHeader(http.StatusNoContent)
 	})
 	return mux
 }
