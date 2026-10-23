@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/traP-jp/isutori/internal/config"
+	"github.com/traP-jp/isutori/internal/inspect"
 	"github.com/traP-jp/isutori/internal/mockportal"
 	"github.com/traP-jp/isutori/internal/queue"
 	"github.com/traP-jp/isutori/internal/receiver"
@@ -40,6 +41,8 @@ const usage = `usage: isutori <command> [arguments]
       from hooks.bench: wait for a result entered by hand
   autobench [--listen ADDR] [--open-command CMD] PORTAL_URL TARGET
       from hooks.bench: let the userscript run the benchmark against TARGET
+  inspect [--listen ADDR] PORTAL_URL
+      record portal DOM changes locally while setting up the userscript
   status [--json]
       show the queue and what was deployed last
   queue clear
@@ -111,6 +114,8 @@ func dispatch(ctx, abort context.Context, args []string) (int, error) {
 		return exitCode(receive(ctx, rest))
 	case "autobench":
 		return exitCode(autobench(ctx, rest))
+	case "inspect":
+		return exitCode(inspectPortal(ctx, rest))
 	case "status":
 		return exitCode(status(ctx, rest))
 	case "queue":
@@ -434,4 +439,33 @@ func defaultRequester(ctx context.Context) string {
 		}
 	}
 	return os.Getenv("USER")
+}
+
+func inspectPortal(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
+	addr := fs.String("listen", "127.0.0.1:7877", "loopback address for portal inspection")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("usage: isutori inspect [--listen ADDR] PORTAL_URL")
+	}
+	ln, err := inspect.Listen(*addr)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+	root, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	session, err := inspect.New(root, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	fmt.Fprintf(os.Stderr, "isutori: inspection directory: %s\n", session.Dir)
+	fmt.Fprintf(os.Stderr, "isutori: open the portal and choose 'isutori: start recording'; paste this connection:\nhttp://%s/#%s\n", ln.Addr(), session.Token)
+	fmt.Fprintln(os.Stderr, "isutori: Ctrl-C stops the receiver; existing recordings are kept")
+	return inspect.Serve(ctx, ln, session)
 }

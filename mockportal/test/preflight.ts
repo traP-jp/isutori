@@ -72,7 +72,7 @@ function page(initialState?: object, automatic = false) {
       if (selector === ".card") return cards;
       return [];
     },
-    createElement() { return { style: {}, textContent: "" }; },
+    createElement() { return { style: {}, textContent: "", setAttribute() {} }; },
     body: { append() {} },
   };
   let now = 0;
