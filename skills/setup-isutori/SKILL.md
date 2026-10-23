@@ -41,7 +41,8 @@ mise が使えない場合は、`go run github.com/traP-jp/isutori@<コミット
 - `$ISUTORI_MODE` をデプロイ手段に渡し、`final` のときはログ出力やプロファイラを切らせる
 - `collect` / `analyze` の成果物は `$ISUTORI_RUN_DIR` の下に置く。publish は、そこにある結果や成果物を共有先へ送る。`isutori docs` の「publish フックの約束事」に従い、成果物の不足、同じ実行 ID の再送、共有処理の競合を扱う
 - `cleanup` は、どのステップで失敗した後に呼ばれても動くようにする
-- `hooks.bench` は、ポータルの URL が分かっていれば `isutori autobench <ポータルの URL> <対象サーバー>`、分からなければ `isutori receive` にする。ポータルがベンチを回す API を提供していれば、その API を呼んで結果を `$ISUTORI_BENCH_RESULT` へ書くスクリプトを使う
+- `hooks.bench` は、許可された API 用コマンド、`isutori autobench <ポータルの URL> <対象サーバー>`、`isutori receive` から選ぶ。autobench を使う場合はポータルの URL を確かめる
+- API を使う場合は、登録と結果取得の可否、認証方法、問い合わせ間隔を当日マニュアルなどで確認し、不明点は運営へ問い合わせる。`isutori docs` の「API でベンチを回す」に従い、競技リポジトリのコマンドを用意する。許可が不明な間は、認められたブラウザ操作や手動入力で進める
 - 対象サーバーは利用者に確かめる。最後に選んだサーバーが最終計測にも使われることがあるので、自分で推測して決めない
 
 ## ユーザースクリプトを当日のポータルに合わせる
