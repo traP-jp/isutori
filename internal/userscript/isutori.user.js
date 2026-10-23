@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         isutori autobench
 // @namespace    https://github.com/traP-jp/isutori
-// @version      7
+// @version      8
 // @description  Records portal DOM changes and runs benchmarks after checking the script identity.
 // @match        http://127.0.0.1:7879/*
 // @grant        GM_xmlhttpRequest
@@ -339,11 +339,15 @@
     },
 
     /**
-     * @param {Job | null} job null reads whatever job the current page shows.
-     * @returns {BenchResult | null} null while the job is still running.
+     * Wait for this job's terminal state and final-result fields from the same update.
+     * A visible or steady score is not final; failed benchmarks are valid results.
+     * Throw on navigation away or unsupported states; never substitute another job.
+     * @param {Job | null} job null reads the job shown on the current page.
+     * @returns {BenchResult | null} null while running or awaiting final-result fields.
      */
     readResult(job) {
-      if (job && location.pathname !== `/contestant/benchmark_jobs/${job.jobId}`) {
+      const current = adapter.currentJob();
+      if (!current || (job && current.jobId !== job.jobId)) {
         throw new Error(`left the job page: ${location.pathname}`);
       }
       /** @param {string} title */
@@ -353,18 +357,29 @@
         );
       const summary = card("Summary");
       if (!summary) return null;
+      const displayedJob = summary.innerText.match(/^ID:\s*(\d+)\s*$/m)?.[1];
+      if (displayedJob !== current.jobId) return null;
       const status = summary.querySelector(".tag")?.textContent?.trim();
+      if (!status || status === "PENDING" || status === "RUNNING") return null;
       const conclusion =
         /** @type {HTMLElement | null | undefined} */ (card("Conclusion")?.querySelector(".card-content"))?.innerText.trim() ?? "";
       if (status === "ERRORED") {
         return { passed: false, score: 0, message: `ERRORED\n${conclusion}`.trim() };
       }
-      if (status !== "FINISHED") return null;
+      if (status !== "FINISHED") throw new Error(`unsupported job status: ${status}`);
       const result = card("Result");
       const tags = [...(result?.querySelectorAll(".tag") ?? [])].map((t) => t.textContent?.trim());
-      const score = result?.innerText.match(/Score:\s*(-?\d+)/);
-      if (!tags.includes("Finished") || !score) return null;
-      return { passed: tags.includes("Passed"), score: Number(score[1]), message: conclusion };
+      if (!tags.includes("Finished")) return null;
+      const passed = tags.includes("Passed");
+      const failed = tags.includes("Failed");
+      if (passed && failed) throw new Error("conflicting result verdicts");
+      if (!passed && !failed) return null;
+      const scoreText = result?.innerText.match(/^Score:[^\S\r\n]*(.*)$/m)?.[1].trim();
+      if (scoreText === undefined || scoreText === "") return null;
+      if (!/^-?\d+$/.test(scoreText) || !Number.isSafeInteger(Number(scoreText))) {
+        throw new Error(`invalid final score: ${scoreText}`);
+      }
+      return { passed, score: Number(scoreText), message: conclusion };
     },
   };
   // ===== END OF PORTAL ADAPTER =====

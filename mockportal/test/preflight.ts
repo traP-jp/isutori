@@ -27,6 +27,10 @@ function page(initialState?: object, automatic = false) {
   const controls = {
     verification: "matched",
     running: false,
+    jobId: "1",
+    status: "FINISHED",
+    resultTags: ["Finished", "Passed"],
+    scoreText: "42",
     handshakes: 0,
     target: "2",
     options: options.map((option) => ({ ...option })),
@@ -61,13 +65,13 @@ function page(initialState?: object, automatic = false) {
     click() { controls.clicks++; location.pathname = "/contestant/benchmark_jobs/1"; },
   };
   const cards = ["Summary", "Conclusion", "Result"].map((title) => ({
-    innerText: "Score: 42",
+    get innerText() { return title === "Summary" ? `ID: ${controls.jobId}` : `Score: ${controls.scoreText}`; },
     querySelector(selector: string) {
       if (selector === ".card-header-title") return { textContent: title };
-      if (selector === ".tag") return { textContent: controls.running ? "RUNNING" : "FINISHED" };
+      if (selector === ".tag") return { textContent: controls.running ? "RUNNING" : controls.status };
       return { innerText: "official result" };
     },
-    querySelectorAll() { return [{ textContent: "Finished" }, { textContent: "Passed" }]; },
+    querySelectorAll() { return controls.resultTags.map(textContent => ({textContent})); },
   }));
   const document = {
     querySelector(selector: string) { return selector === "select" ? select : null; },
@@ -117,6 +121,12 @@ function page(initialState?: object, automatic = false) {
   return {
     controls, alerts, posted, phases, storage, location, badges,
     start() { runInNewContext(source, sandbox); },
+    read() {
+      const callback = menus.get("isutori: read this page");
+      assert.ok(callback);
+      callback();
+      return alerts.at(-1);
+    },
     async check() {
       const callback = menus.get("isutori: check enqueue");
       assert.ok(callback);
@@ -320,4 +330,69 @@ test("verification recovery clears the blocked badge while the job is still runn
   assert.ok(checked);
   assert.equal(p.controls.clicks, 0);
   assert.equal(p.posted.length, 1);
+});
+
+
+for (const state of ["running", "pending", "old job", "result pending", "missing verdict", "missing score"]) {
+  test(`result reader waits for ${state}`, () => {
+    const p = page();
+    p.location.pathname = "/contestant/benchmark_jobs/1";
+    if (state === "running") p.controls.running = true;
+    if (state === "pending") p.controls.status = "PENDING";
+    if (state === "old job") p.controls.jobId = "9";
+    if (state === "result pending") p.controls.resultTags = ["In progress"];
+    if (state === "missing verdict") p.controls.resultTags = ["Finished"];
+    if (state === "missing score") p.controls.scoreText = "";
+    p.start();
+    assert.equal(p.read(), "null");
+    assert.equal(p.posted.length, 0);
+  });
+}
+
+for (const state of ["wrong page", "unknown status", "conflicting verdicts", "partial number", "fraction", "unsafe integer"]) {
+  test(`result reader rejects ${state}`, () => {
+    const p = page();
+    p.location.pathname = state === "wrong page" ? "/contestant" : "/contestant/benchmark_jobs/1";
+    if (state === "unknown status") p.controls.status = "UNKNOWN";
+    if (state === "conflicting verdicts") p.controls.resultTags = ["Finished", "Passed", "Failed"];
+    if (state === "partial number") p.controls.scoreText = "42pending";
+    if (state === "fraction") p.controls.scoreText = "42.5";
+    if (state === "unsafe integer") p.controls.scoreText = "9007199254740993";
+    p.start();
+    assert.match(p.read() ?? "", /^readResult threw:/);
+  });
+}
+
+for (const outcome of ["passed", "failed", "errored"]) {
+  test(`result reader returns a final ${outcome} benchmark`, () => {
+    const p = page();
+    p.location.pathname = "/contestant/benchmark_jobs/1";
+    if (outcome === "failed") { p.controls.resultTags = ["Finished", "Failed"]; p.controls.scoreText = "0"; }
+    if (outcome === "errored") p.controls.status = "ERRORED";
+    p.start();
+    const result = JSON.parse(p.read() ?? "null");
+    assert.equal(result.passed, outcome === "passed");
+    assert.equal(result.score, outcome === "passed" ? 42 : 0);
+  });
+}
+
+test("automatic result collection reports navigation to another job as an acquisition error", async () => {
+  const p = page({runId: "test", receiver: "http://localhost:7878", target: "2", phase: "waiting", job: {jobId: "2"}, startedAt: 0});
+  p.location.pathname = "/contestant/benchmark_jobs/1";
+  p.start();
+  await setImmediate();
+  const result = JSON.parse(p.posted[0]);
+  assert.match(result.error, /left the job page/);
+  assert.equal(result.score, undefined);
+});
+
+test("a job that never publishes a final result times out without publishing its score", async () => {
+  const p = page({runId: "test", receiver: "http://localhost:7878", target: "2", phase: "waiting", job: {jobId: "1"}, startedAt: -20 * 60 * 1000});
+  p.location.pathname = "/contestant/benchmark_jobs/1";
+  p.controls.running = true;
+  p.start();
+  await setImmediate();
+  const result = JSON.parse(p.posted[0]);
+  assert.match(result.error, /timed out/);
+  assert.equal(result.score, undefined);
 });

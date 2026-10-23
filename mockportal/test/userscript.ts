@@ -134,6 +134,52 @@ await new Promise((r) => setTimeout(r, 1000));
 let browser: Browser | undefined;
 try {
   browser = await chromium.launch({ headless: true });
+  {
+    const page = await newPage(browser);
+    const runId = "final-result-transitions";
+    await page.context().route(`${pass}/contestant/benchmark_jobs/77`, route => route.fulfill({
+      contentType: "text/html",
+      body: `<div class="card"><h4 class="card-header-title">Summary</h4><p>ID: <span id="job-id">76</span></p><span class="tag" id="job-status">FINISHED</span></div>
+        <div class="card"><h4 class="card-header-title">Result</h4><span class="tag" id="result-status">Finished</span><span class="tag" id="verdict">Passed</span><p>Score: <span id="score">99999</span></p></div>
+        <div class="card"><h4 class="card-header-title">Conclusion</h4><div class="card-content">final result</div></div>`,
+    }));
+    await page.context().addInitScript(({ runId, receiverURL }) => {
+      sessionStorage.setItem("isutori-autobench-v2", JSON.stringify({runId, receiver: receiverURL, target: "2", phase: "waiting", job: {jobId: "77"}, startedAt: Date.now()}));
+    }, {runId, receiverURL});
+    let reported = false;
+    const set = async (values: Record<string, string>) => page.evaluate(values => {
+      for (const [id, value] of Object.entries(values)) {
+        const element = document.getElementById(id);
+        if (!element) throw new Error(`missing fixture element: ${id}`);
+        element.textContent = value;
+      }
+    }, values);
+    const waiting = async () => {
+      await page.waitForTimeout(2200);
+      assert.equal(reported, false, "reported a stale or unfinished score");
+    };
+    const result = await resultAfter(runId, async () => {
+      const onResult = posted.get(runId);
+      assert.ok(onResult);
+      posted.set(runId, result => { reported = true; onResult(result); });
+      await page.goto(`${pass}/contestant/benchmark_jobs/77`);
+      await waiting();
+      await set({"job-id": "77", "job-status": "RUNNING", "result-status": "In progress", score: "100"});
+      await waiting();
+      await waiting();
+      await set({score: "150"});
+      await waiting();
+      await set({"job-status": "FINISHED"});
+      await waiting();
+      await set({"result-status": "Finished", verdict: "", score: ""});
+      await waiting();
+      await set({verdict: "Passed", score: "789"});
+    }, 40000);
+    assert.equal(result.passed, true);
+    assert.equal(result.score, 789);
+    await page.close();
+    console.log("final result: ignores old jobs, growing/paused scores and incomplete final fields");
+  }
   for (const manual of [false,true]) {
     const runId=manual?"identity-manual":"identity-integration";
     mkdirSync("../.claude",{recursive:true});
