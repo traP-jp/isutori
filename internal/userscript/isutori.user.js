@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         isutori autobench
 // @namespace    https://github.com/traP-jp/isutori
-// @version      9
+// @version      10
 // @description  Records portal DOM changes and runs benchmarks after checking the script identity.
 // @match        http://127.0.0.1:7879/*
 // @grant        GM_xmlhttpRequest
@@ -286,6 +286,10 @@
     /**
      * Prepares target selection without registering a job. Loading placeholders
      * are not real options; the target may determine the final measurement.
+     * Custom controls may select on mousedown, not click; inspect their handlers.
+     * Omit view: window in synthetic events: Tampermonkey may wrap that Window.
+     * role="option" may also mark an empty message. Empty alone does not prove
+     * loading, failure, or absence of targets; check the portal's state.
      * @param {string} target the TARGET given to `isutori autobench`
      * @returns {Promise<Prepared>}
      */
