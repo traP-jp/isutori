@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         isutori autobench
 // @namespace    https://github.com/traP-jp/isutori
-// @version      4
+// @version      5
 // @description  Enqueues a benchmark when opened by `isutori bench` and reports the result to it.
 // @match        http://127.0.0.1:7879/*
 // @grant        GM_xmlhttpRequest
@@ -20,41 +20,77 @@
   // The example below targets isucon14-portal (and `isutori mock-portal`).
   // Try readResult on a finished job page with the "read this page" menu
   // command of the userscript manager; it does not enqueue anything.
+  // "check enqueue" selects a target and checks readiness without submitting.
 
   /**
-   * Identifies a job. It is kept in sessionStorage, so it must survive JSON.
+   * Jobs are kept in sessionStorage, so they must survive JSON.
    * @typedef {{ jobId: string }} Job
+   */
+
+  /**
+   * Preparation may select a server, but must not enqueue or change run state.
+   * submit must recheck the target and button before registering exactly one job.
+   * Keep this object in memory; only Job is saved across page reloads.
+   * @typedef {{ target: string, submit: () => Promise<Job> }} Prepared
    */
 
   const adapter = {
     /**
-     * Starts exactly one benchmark job against target on the page that isutori
-     * opened. The portal may take the last target for the final measurement,
-     * so never fall back to another server.
+     * Prepares target selection without registering a job. Loading placeholders
+     * are not real options; the target may determine the final measurement.
      * @param {string} target the TARGET given to `isutori autobench`
-     * @returns {Promise<Job>}
-     * @throws if target is not offered or the portal refuses, e.g. because
-     *   another job is running.
+     * @returns {Promise<Prepared>}
      */
-    async enqueue(target) {
-      const select = await waitFor("the server select", () => document.querySelector("select"));
-      // Options read like "1: 192.168.0.11 (203.0.113.11)"; target may be any of those parts.
-      const matches = [...select.options].filter((o) => o.text.split(/[\s:()]+/).includes(target));
-      if (matches.length !== 1) {
-        throw new Error(`target ${JSON.stringify(target)} matches ${matches.length} of: ${[...select.options].map((o) => o.text).join(", ")}`);
-      }
-      select.value = matches[0].value;
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-      const button = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Enqueue");
-      if (!button) throw new Error("Enqueue button not found");
-      button.click();
-      return waitFor("the job page", () => {
-        const job = adapter.currentJob();
-        if (job) return job;
-        const error = document.querySelector(".message.is-danger, .notification.is-danger");
-        if (error) throw new Error(`portal refused to enqueue: ${error.textContent?.trim()}`);
-        return null;
+    async prepare(target) {
+      const select = await waitFor("the server options", () => {
+        const select = document.querySelector("select");
+        return select && !select.matches(":disabled") && [...select.options].some((o) => o.value && !o.disabled) ? select : null;
       });
+      const options = [...select.options].filter((o) => o.value && !o.disabled);
+      // Options read like "1: 192.168.0.11 (203.0.113.11)"; target may be any of those parts.
+      /** @param {string} text */
+      const matchesTarget = (text) => text.split(/[\s:()]+/).includes(target);
+      const matches = options.filter((o) => matchesTarget(o.text));
+      if (matches.length !== 1) {
+        throw new Error(`target ${JSON.stringify(target)} matches ${matches.length} of: ${options.map((o) => o.text).join(", ")}; selected server: ${JSON.stringify(select.selectedOptions[0]?.text ?? null)}`);
+      }
+      const option = matches[0];
+      select.value = option.value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      const enabledButton = () => {
+        const button = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Enqueue");
+        return button && !button.matches(":disabled") && button.getAttribute("aria-disabled") !== "true" ? button : null;
+      };
+      try {
+        await waitFor(`selected server ${JSON.stringify(option.text)}`, () => document.querySelector("select")?.value === option.value);
+        await waitFor("the enabled Enqueue button", enabledButton);
+      } catch (e) {
+        throw new Error(`${e.message}; selected server: ${JSON.stringify(document.querySelector("select")?.selectedOptions[0]?.text ?? null)}`);
+      }
+
+      const checkedButton = () => {
+        const current = document.querySelector("select");
+        if (!current || current.matches(":disabled") || current.value !== option.value || !matchesTarget(current.selectedOptions[0]?.text ?? "")) {
+          throw new Error(`selected server changed: expected ${JSON.stringify(option.text)}, got ${JSON.stringify(current?.selectedOptions[0]?.text ?? null)}`);
+        }
+        const button = enabledButton();
+        if (!button) throw new Error("Enqueue button is missing or disabled");
+        return button;
+      };
+      checkedButton();
+      return {
+        target: option.text,
+        async submit() {
+          checkedButton().click();
+          return waitFor("the job page", () => {
+            const job = adapter.currentJob();
+            if (job) return job;
+            const error = document.querySelector(".message.is-danger, .notification.is-danger");
+            if (error) throw new Error(`portal refused to enqueue: ${error.textContent?.trim()}`);
+            return null;
+          });
+        },
+      };
     },
 
     /**
@@ -99,10 +135,7 @@
 
   /** @typedef {{ passed: boolean, score: number, message: string }} BenchResult */
 
-  /**
-   * What is posted to the isutori receiver along with the run id.
-   * @typedef {BenchResult | { error: string }} Report
-   */
+  /** @typedef {BenchResult | { error: string }} Report */
 
   /**
    * @typedef {object} Run
@@ -158,10 +191,7 @@
     show(state);
   }
 
-  /**
-   * Each tab tracks at most one run; reopening the same run id resumes it.
-   * @returns {State | null}
-   */
+  /** @returns {State | null} */
   function stateFromHash() {
     const params = new URLSearchParams(location.hash.slice(1));
     const runId = params.get("autobench");
@@ -211,17 +241,18 @@
   /** @param {State} state */
   async function run(state) {
     if (state.phase === "enqueue") {
-      saveState({ ...state, phase: "enqueuing" });
+      saveState(state);
       try {
-        const job = await adapter.enqueue(state.target);
+        const prepared = await adapter.prepare(state.target);
+        saveState({ ...state, phase: "enqueuing" });
+        const job = await prepared.submit();
         state = { ...state, phase: "waiting", job };
         saveState(state);
       } catch (e) {
         return report(state, { error: `enqueue: ${e.message}` });
       }
     } else if (state.phase === "enqueuing") {
-      // The page was reloaded while enqueuing. Never press the button again:
-      // either this page shows the new job or the outcome is unknown.
+      // Never resubmit after reload: registration may already have succeeded.
       try {
         const job = await waitFor("the job page", () => adapter.currentJob(), 15 * 1000);
         state = { ...state, phase: "waiting", job };
@@ -268,6 +299,26 @@
       alert(JSON.stringify(adapter.readResult(null), null, 2));
     } catch (e) {
       alert(`readResult threw: ${e.message}`);
+    }
+  });
+
+  let checking = false;
+  GM_registerMenuCommand("isutori: check enqueue", async () => {
+    if (checking) return alert("An enqueue check is already running.");
+    const state = loadState();
+    if (state && state.phase !== "done") {
+      return alert(`This tab has run ${state.runId} (${state.phase}). Open a separate portal tab for the check.`);
+    }
+    const target = prompt("Target server (selection will change; no benchmark will be enqueued):")?.trim();
+    if (!target) return;
+    checking = true;
+    try {
+      const prepared = await adapter.prepare(target);
+      alert(JSON.stringify({ requested: target, selected: prepared.target, ready: true, enqueued: false }, null, 2));
+    } catch (e) {
+      alert(`prepare: target ${JSON.stringify(target)}: ${e.message}`);
+    } finally {
+      checking = false;
     }
   });
 
