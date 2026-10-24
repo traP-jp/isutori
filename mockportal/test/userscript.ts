@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type Browser, chromium, type Dialog, type Page } from "playwright";
 
@@ -215,10 +216,9 @@ try {
   }
   for (const manual of [false, true]) {
     const runId = manual ? "identity-manual" : "identity-integration";
-    mkdirSync("../.claude", { recursive: true });
-    const work = mkdtempSync(resolve("../.claude/identity-browser-"));
-    const scriptPath = join(work, "script.user.js"),
-      resultPath = join(work, "bench.json");
+    const work = mkdtempSync(join(tmpdir(), "isutori-identity-"));
+    const scriptPath = join(work, "script.user.js");
+    const resultPath = join(work, "bench.json");
     writeFileSync(scriptPath, userscript);
     const cli = spawn(
       resolve(".cache/isutori"),

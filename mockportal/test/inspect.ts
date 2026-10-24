@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { type Browser, chromium, type Page } from "playwright";
 
 declare global {
@@ -19,9 +19,7 @@ interface Entry {
   target?: string;
   userscript: { expected: string; actual: string; status: string; error?: string };
 }
-const repo = fileURLToPath(new URL("../../", import.meta.url));
-mkdirSync(join(repo, ".claude"), { recursive: true });
-const work = mkdtempSync(join(repo, ".claude/inspect-browser-"));
+const work = mkdtempSync(join(tmpdir(), "isutori-inspect-"));
 execFileSync("go", ["build", "-o", ".cache/isutori", ".."], { stdio: "inherit" });
 const binary = resolve(".cache/isutori");
 const portal = "http://portal.example";

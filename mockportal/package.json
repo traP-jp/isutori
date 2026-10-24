@@ -6,7 +6,7 @@
     "typecheck": "node build.ts --fetch-only && tsc --noEmit",
     "test": "node test/preflight.ts && node test/userscript.ts && node test/inspect.ts && node test/tabs.ts",
     "test:unit": "node test/preflight.ts",
-    "lint": "biome ci ..",
+    "lint": "biome ci --error-on-warnings ..",
     "format": "biome check --write .."
   },
   "dependencies": {
