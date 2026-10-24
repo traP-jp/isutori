@@ -3,7 +3,7 @@ package main
 
 import (
 	"context"
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -51,8 +51,8 @@ const usage = `usage: isutori <command> [arguments]
       write an isutori.toml template and ignore .isutori/
   userscript [MATCH_PATTERN...]
       print the userscript for the portal
-  docs
-      print the README
+  docs [PAGE]
+      print the README, or docs/PAGE.md
   mock-portal [--listen ADDR] [--pending D] [--running D] [--outcome pass|fail|error] [--score N]
       serve a fake portal for trying the userscript
 
@@ -61,8 +61,8 @@ exit codes of bench: 0 benchmark passed, 1 error, 2 benchmark failed
 
 const exitBenchFailed = 2
 
-//go:embed README.md
-var readme string
+//go:embed README.md docs/*.md
+var docs embed.FS
 
 func main() {
 	// The first interrupt stops gracefully, the second abandons cleanup, and
@@ -126,7 +126,14 @@ func dispatch(ctx, abort context.Context, args []string) (int, error) {
 	case "init":
 		return exitCode(initRepo(ctx))
 	case "docs":
-		_, err := os.Stdout.WriteString(readme)
+		if len(rest) > 1 {
+			return 1, errors.New("usage: isutori docs [PAGE]")
+		}
+		page, err := readDoc(rest)
+		if err != nil {
+			return 1, err
+		}
+		_, err = os.Stdout.Write(page)
 		return exitCode(err)
 	case "userscript":
 		return exitCode(printUserscript(rest))
@@ -378,6 +385,25 @@ func initRepo(ctx context.Context) error {
 		b = append(b, '\n')
 	}
 	return os.WriteFile(ignore, append(b, "/.isutori/\n"...), 0o644)
+}
+
+func readDoc(args []string) ([]byte, error) {
+	if len(args) == 0 {
+		return docs.ReadFile("README.md")
+	}
+	page, err := docs.ReadFile("docs/" + args[0] + ".md")
+	if err == nil {
+		return page, nil
+	}
+	entries, dirErr := docs.ReadDir("docs")
+	if dirErr != nil {
+		return nil, dirErr
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, strings.TrimSuffix(e.Name(), ".md"))
+	}
+	return nil, fmt.Errorf("no page %q; pages: %s", args[0], strings.Join(names, ", "))
 }
 
 func printUserscript(match []string) error {
