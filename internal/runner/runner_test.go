@@ -318,7 +318,7 @@ func TestExecuteKeepsBenchmarkAndCleansUp(t *testing.T) {
 				opsDir: dir, out: io.Discard, log: log.New(io.Discard, "", 0),
 				summary: &Summary{RunID: "run1", RunDir: dir, Ticket: queue.Ticket{ID: "ticket1", AppCommit: "app1"}},
 			}
-			r.env = environment(r.summary, dir, "unused", "unused")
+			r.env = environment(r.summary, r.summary.Ticket.ID, dir, "unused", "unused")
 			err := r.execute(context.Background(), context.Background())
 			if (err != nil) != (failure != "") {
 				t.Fatalf("execute: %v", err)

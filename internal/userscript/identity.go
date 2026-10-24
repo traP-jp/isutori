@@ -10,25 +10,43 @@ import (
 
 const DefaultPath = "ops/isutori.user.js"
 
-// Keep the wrapper signature in sync with isutori.user.js.
-const functionStart = "function isutoriScript() {"
+// Keep these in sync with the wrapper in isutori.user.js.
+const (
+	functionStart = "function isutoriScript() {"
+	wrapperStart  = "(" + functionStart
+	wrapperEnd    = ")();"
+)
+
+type Status string
+
+// The same strings appear in isutori.user.js, and in bench.json and run.json.
+const (
+	Matched    Status = "matched"
+	Mismatched Status = "mismatched"
+	Unknown    Status = "unknown"
+	NotChecked Status = "not_checked"
+)
 
 type Verification struct {
 	Expected string `json:"expected"`
 	Actual   string `json:"actual"`
-	Status   string `json:"status"`
+	Status   Status `json:"status"`
 	Error    string `json:"error,omitempty"`
 }
 
+// Reference is the identity of the userscript file that the running script
+// must match.
 type Reference struct {
-	ID    string
-	Error string
+	ID  string
+	Err error
 }
 
 func normalize(source string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(source, "\r\n", "\n"), "\r", "\n")
 }
 
+// SourceID identifies the source of the isutoriScript function, as the browser
+// reports it.
 func SourceID(source string) (string, error) {
 	source = normalize(source)
 	if source == functionStart+" [native code] }" {
@@ -41,54 +59,53 @@ func SourceID(source string) (string, error) {
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
+// FileSource extracts the isutoriScript function from a userscript file.
 func FileSource(script string) (string, error) {
-	script = normalize(script)
-	header, body, ok := strings.Cut(script, "// ==/UserScript==")
+	header, body, ok := strings.Cut(normalize(script), "// ==/UserScript==")
 	if !ok {
 		return "", errors.New("userscript metadata is missing")
 	}
-	for _, line := range strings.Split(header, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, "//") {
+	for line := range strings.Lines(header) {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "//") {
 			return "", errors.New("code outside the isutoriScript wrapper is not supported")
 		}
 	}
-	body = strings.TrimSpace(body)
-	body = strings.TrimSpace(strings.TrimPrefix(body, "// @ts-check"))
-	if !strings.HasPrefix(body, "("+functionStart) || !strings.HasSuffix(body, "})();") {
+	body = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(body), "// @ts-check"))
+	if !strings.HasPrefix(body, wrapperStart) || !strings.HasSuffix(body, wrapperEnd) {
 		return "", errors.New("expected the isutoriScript wrapper; regenerate the userscript template")
 	}
-	return body[1 : len(body)-4], nil
+	return strings.TrimSuffix(strings.TrimPrefix(body, "("), wrapperEnd), nil
 }
 
 func ReadReference(path string) Reference {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return Reference{Error: err.Error()}
+		return Reference{Err: err}
 	}
 	source, err := FileSource(string(b))
 	if err != nil {
-		return Reference{Error: err.Error()}
+		return Reference{Err: err}
 	}
 	id, err := SourceID(source)
-	if err != nil {
-		return Reference{Error: err.Error()}
-	}
-	return Reference{ID: id}
+	return Reference{ID: id, Err: err}
 }
 
+// Compare checks the ID of the running script against the reference.
 func (r Reference) Compare(actual string) Verification {
-	v := Verification{Expected: r.ID, Actual: actual, Status: "unknown", Error: r.Error}
-	if r.Error != "" || r.ID == "" || actual == "" {
-		return v
-	}
-	v.Status = "mismatched"
-	if r.ID == actual {
-		v.Status = "matched"
+	v := Verification{Expected: r.ID, Actual: actual, Status: Unknown}
+	switch {
+	case r.Err != nil:
+		v.Error = r.Err.Error()
+	case actual == "":
+	case actual == r.ID:
+		v.Status = Matched
+	default:
+		v.Status = Mismatched
 	}
 	return v
 }
 
+// Verify checks the source of the running script against the reference.
 func (r Reference) Verify(source string) Verification {
 	actual, err := SourceID(source)
 	v := r.Compare(actual)

@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/traP-jp/isutori/internal/userscript"
 	"io"
-	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -16,10 +14,21 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/traP-jp/isutori/internal/strictjson"
+	"github.com/traP-jp/isutori/internal/userscript"
 )
 
-const maxEventBytes = 2 << 20
-const maxSessionBytes = 100 << 20
+const (
+	maxStartBytes   = 1 << 20
+	maxEventBytes   = 2 << 20
+	maxSessionBytes = 100 << 20
+	maxEvents       = 10000
+	maxPages        = 10000
+	maxPageIDLen    = 128
+	maxReasonLen    = 100
+	maxTargetLen    = 4096
+)
 
 type Event struct {
 	Page       string                  `json:"page"`
@@ -73,26 +82,15 @@ func (s *Session) Handler() http.Handler {
 		if !s.authorized(w, r) {
 			return
 		}
-		if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
-			http.Error(w, "expected application/json", 415)
-			return
-		}
 		var request struct {
 			Page   string `json:"page"`
 			Source string `json:"source"`
 		}
-		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&request); err != nil {
-			http.Error(w, err.Error(), 400)
+		if !strictjson.DecodeRequest(w, r, maxStartBytes, &request) {
 			return
 		}
-		if err := dec.Decode(new(any)); err != io.EOF {
-			http.Error(w, "expected one JSON object", 400)
-			return
-		}
-		if request.Page == "" || len(request.Page) > 128 {
-			http.Error(w, "invalid page ID", 400)
+		if !validPageID(request.Page) {
+			http.Error(w, "invalid page ID", http.StatusBadRequest)
 			return
 		}
 		actual, sourceErr := userscript.SourceID(request.Source)
@@ -104,12 +102,12 @@ func (s *Session) Handler() http.Handler {
 		previous, registered := s.identities[request.Page]
 		if registered && (previous.Actual != identity.Actual || previous.Error != identity.Error) {
 			s.mu.Unlock()
-			http.Error(w, "page identity already registered", 409)
+			http.Error(w, "page identity already registered", http.StatusConflict)
 			return
 		}
-		if len(s.identities) >= 10000 && !registered {
+		if len(s.identities) >= maxPages && !registered {
 			s.mu.Unlock()
-			http.Error(w, "inspection capacity reached", 500)
+			http.Error(w, "inspection capacity reached", http.StatusInternalServerError)
 			return
 		}
 		s.identities[request.Page] = identity
@@ -128,27 +126,12 @@ func (s *Session) Handler() http.Handler {
 		if !s.authorized(w, r) {
 			return
 		}
-		if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
-			http.Error(w, "expected application/json", http.StatusUnsupportedMediaType)
-			return
-		}
 		var event Event
-		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxEventBytes))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&event); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		if !strictjson.DecodeRequest(w, r, maxEventBytes, &event) {
 			return
 		}
-		if err := dec.Decode(new(any)); err != io.EOF {
-			http.Error(w, "expected one JSON object", http.StatusBadRequest)
-			return
-		}
-		u, err := url.Parse(event.URL)
-		if err != nil || u.Scheme+"://"+u.Host != s.Origin || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
-			event.Page == "" || len(event.Page) > 128 || event.Sequence < 1 || event.At.IsZero() ||
-			event.Reason == "" || len(event.Reason) > 100 || len(event.Target) > 4096 ||
-			(event.Visibility != "visible" && event.Visibility != "hidden") || event.Snapshot != "" || !event.ReceivedAt.IsZero() || event.Userscript != (userscript.Verification{}) {
-			http.Error(w, "invalid inspection event", http.StatusBadRequest)
+		if err := event.validate(s.Origin); err != nil {
+			http.Error(w, "invalid inspection event: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		if err := s.append(&event); err != nil {
@@ -159,6 +142,29 @@ func (s *Session) Handler() http.Handler {
 		json.NewEncoder(w).Encode(event.Userscript)
 	})
 	return mux
+}
+
+func validPageID(page string) bool { return page != "" && len(page) <= maxPageIDLen }
+
+func (e *Event) validate(origin string) error {
+	u, err := url.Parse(e.URL)
+	switch {
+	case err != nil || u.Scheme+"://"+u.Host != origin || u.User != nil:
+		return errors.New("url is not on the portal")
+	case u.RawQuery != "" || u.Fragment != "":
+		return errors.New("url must not carry a query or fragment")
+	case !validPageID(e.Page):
+		return errors.New("invalid page ID")
+	case e.Sequence < 1 || e.At.IsZero():
+		return errors.New("sequence and time are required")
+	case e.Reason == "" || len(e.Reason) > maxReasonLen || len(e.Target) > maxTargetLen:
+		return errors.New("reason or target out of range")
+	case e.Visibility != "visible" && e.Visibility != "hidden":
+		return errors.New("unknown visibility")
+	case e.Snapshot != "" || !e.ReceivedAt.IsZero() || e.Userscript != (userscript.Verification{}):
+		return errors.New("snapshot, received_at and userscript are set by the receiver")
+	}
+	return nil
 }
 
 func (s *Session) authorized(w http.ResponseWriter, r *http.Request) bool {
@@ -197,7 +203,7 @@ func (s *Session) append(event *Event) error {
 	if err != nil {
 		return err
 	}
-	if s.count >= 10000 || s.bytes+int64(size+len(b)+1) > maxSessionBytes {
+	if s.count >= maxEvents || s.bytes+int64(size+len(b)+1) > maxSessionBytes {
 		return errors.New("inspection capacity reached; start a new session")
 	}
 	if html != "" {

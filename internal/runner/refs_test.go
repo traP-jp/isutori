@@ -62,15 +62,15 @@ func TestPrepareRefsSnapshot(t *testing.T) {
 	if err := os.WriteFile(fetchHead, []byte("unchanged\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	app, ops, ref, err := prepareRefs(context.Background(), work, "snapshot", "HEAD", logger)
+	refs, err := prepareRefs(context.Background(), work, "snapshot", "HEAD", logger)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ref != "main" {
-		t.Fatalf("ref=%q, want main", ref)
+	if refs.Name != "main" {
+		t.Fatalf("ref=%q, want main", refs.Name)
 	}
-	if app != first || ops != latest {
-		t.Fatalf("app=%s ops=%s", app, ops)
+	if refs.App != first || refs.Ops != latest {
+		t.Fatalf("app=%s ops=%s", refs.App, refs.Ops)
 	}
 	for ref, want := range map[string]string{
 		"local-tag": first, "local-branch": first, "origin/local-branch": first,
@@ -112,9 +112,9 @@ func TestPrepareRefsParallelWorktrees(t *testing.T) {
 			defer wg.Done()
 			id := []string{"one", "two"}[i]
 			defer cleanupRefs(root, id, logger)
-			app, ops, _, err := prepareRefs(context.Background(), root, id, "HEAD", logger)
-			if err != nil || app != first || ops != latest {
-				t.Errorf("%s: %s %s %v", id, app, ops, err)
+			refs, err := prepareRefs(context.Background(), root, id, "HEAD", logger)
+			if err != nil || refs.App != first || refs.Ops != latest {
+				t.Errorf("%s: %s %s %v", id, refs.App, refs.Ops, err)
 			}
 		}()
 	}
@@ -139,7 +139,7 @@ func TestPrepareRefsRejectsUnpushedAndDeleted(t *testing.T) {
 	runGit(t, work, "update-ref", "refs/remotes/origin/deleted", "HEAD")
 	logger := log.New(io.Discard, "", 0)
 	defer cleanupRefs(work, "rejected", logger)
-	if _, _, _, err := prepareRefs(context.Background(), work, "rejected", "HEAD", logger); err == nil || !strings.Contains(err.Error(), "push it first") {
+	if _, err := prepareRefs(context.Background(), work, "rejected", "HEAD", logger); err == nil || !strings.Contains(err.Error(), "push it first") {
 		t.Fatalf("unpushed: %v", err)
 	}
 	if _, err := resolveRef(context.Background(), work, "refs/isutori/rejected/", "origin/deleted"); err == nil {
@@ -178,7 +178,7 @@ func TestResolveRefRejectsTransientRefs(t *testing.T) {
 	_, work, _, _ := refFixture(t)
 	logger := log.New(io.Discard, "", 0)
 	defer cleanupRefs(work, "transient", logger)
-	if _, _, _, err := prepareRefs(context.Background(), work, "transient", "HEAD", logger); err != nil {
+	if _, err := prepareRefs(context.Background(), work, "transient", "HEAD", logger); err != nil {
 		t.Fatal(err)
 	}
 	for _, ref := range []string{"FETCH_HEAD", "FETCH_HEAD^0", "origin/main@{0}", "origin/main@{1}"} {
@@ -193,7 +193,7 @@ func TestAmbiguousOriginBranch(t *testing.T) {
 	runGit(t, work, "branch", "origin/main", first)
 	logger := log.New(io.Discard, "", 0)
 	defer cleanupRefs(work, "review", logger)
-	_, _, _, err := prepareRefs(context.Background(), work, "review", "origin/main", logger)
+	_, err := prepareRefs(context.Background(), work, "review", "origin/main", logger)
 	if err == nil || !strings.Contains(err.Error(), "ambiguous ref") {
 		t.Fatalf("expected ambiguous ref error, got %v", err)
 	}
@@ -210,7 +210,7 @@ func TestUpstreamWithoutTrackingRef(t *testing.T) {
 	runGit(t, work, "update-ref", "-d", "refs/remotes/origin/main")
 	logger := log.New(io.Discard, "", 0)
 	defer cleanupRefs(work, "review", logger)
-	if _, _, _, err := prepareRefs(context.Background(), work, "review", "HEAD@{upstream}", logger); err != nil {
+	if _, err := prepareRefs(context.Background(), work, "review", "HEAD@{upstream}", logger); err != nil {
 		t.Fatal(err)
 	}
 	for _, ref := range []string{"HEAD@{upstream}", "@{u}", "main@{u}", "refs/heads/main@{upstream}", "HEAD@{push}"} {

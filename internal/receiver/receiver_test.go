@@ -16,8 +16,9 @@ import (
 )
 
 func TestHandler(t *testing.T) {
-	results := make(chan Result, 1)
-	srv := httptest.NewServer(handler("run1", results, "", io.Discard, func(Result) error { return nil }))
+	rec := newReceiver(Options{RunID: "run1", Log: io.Discard, Save: func(Result) error { return nil }})
+	results := rec.results
+	srv := httptest.NewServer(rec.handler())
 	defer srv.Close()
 
 	post := func(contentType, body string) int {
@@ -56,10 +57,9 @@ func TestHandler(t *testing.T) {
 }
 
 func TestSaveBeforeAcknowledgement(t *testing.T) {
-	results := make(chan Result, 1)
 	attempts := 0
 	saved := false
-	h := handler("run1", results, "", io.Discard, func(res Result) error {
+	rec := newReceiver(Options{RunID: "run1", Log: io.Discard, Save: func(res Result) error {
 		attempts++
 		if res.Score != 42 {
 			t.Fatalf("saving wrong result: %+v", res)
@@ -69,7 +69,9 @@ func TestSaveBeforeAcknowledgement(t *testing.T) {
 		}
 		saved = true
 		return nil
-	})
+	}})
+	results := rec.results
+	h := rec.handler()
 	post := func() *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", "/api/result", strings.NewReader(`{"run_id":"run1","passed":true,"score":42}`))
 		r.Header.Set("Content-Type", "application/json")
@@ -90,9 +92,10 @@ func TestSaveBeforeAcknowledgement(t *testing.T) {
 }
 
 func TestConcurrentResultDelivery(t *testing.T) {
-	results := make(chan Result, 1)
 	saves := 0
-	h := handler("run1", results, "", io.Discard, func(Result) error { saves++; return nil })
+	rec := newReceiver(Options{RunID: "run1", ScriptPath: "", Log: io.Discard, Save: func(Result) error { saves++; return nil }})
+	results := rec.results
+	h := rec.handler()
 	var accepted atomic.Int32
 	var wg sync.WaitGroup
 	for range 12 {
@@ -126,9 +129,9 @@ func TestUserscriptGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	results := make(chan Result, 1)
 	var saved Result
-	h := handler("run1", results, path, io.Discard, func(r Result) error { saved = r; return nil })
+	rec := newReceiver(Options{RunID: "run1", ScriptPath: path, Log: io.Discard, Save: func(r Result) error { saved = r; return nil }})
+	h := rec.handler()
 	post := func(path string, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", path, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
@@ -169,9 +172,9 @@ func TestUserscriptGate(t *testing.T) {
 }
 
 func TestManualInputAfterMismatch(t *testing.T) {
-	results := make(chan Result, 1)
 	var saved Result
-	h := handler("run1", results, "missing.user.js", io.Discard, func(r Result) error { saved = r; return nil })
+	rec := newReceiver(Options{RunID: "run1", ScriptPath: "missing.user.js", Log: io.Discard, Save: func(r Result) error { saved = r; return nil }})
+	h := rec.handler()
 	r := httptest.NewRequest("POST", "/api/manual-result", strings.NewReader(`{"run_id":"run1","passed":true,"score":42,"userscript":{"status":"matched"}}`))
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

@@ -1,26 +1,26 @@
-import React from "react";
-import ReactDOM from "react-dom";
 import { create } from "@bufbuild/protobuf";
 import { timestampFromMs } from "@bufbuild/protobuf/wkt";
 import { ApiClient, ApiError } from "@portal/ApiClient";
 import { ContestantApp } from "@portal/ContestantApp";
 import { updateNavBarSession } from "@portal/NavbarSession";
 import { ErrorSchema } from "@proto/error_pb";
-import { BenchmarkJobSchema, BenchmarkJob_Status, type BenchmarkJob } from "@proto/resources/benchmark_job_pb";
+import { type BenchmarkJob, BenchmarkJob_Status, BenchmarkJobSchema } from "@proto/resources/benchmark_job_pb";
 import { Contest_Status, ContestSchema } from "@proto/resources/contest_pb";
 import { ContestantInstance_Status, ContestantInstanceSchema } from "@proto/resources/contestant_instance_pb";
-import { LeaderboardItemSchema, type LeaderboardItem } from "@proto/resources/leaderboard_pb";
+import { type LeaderboardItem, LeaderboardItemSchema } from "@proto/resources/leaderboard_pb";
 import { DashboardResponseSchema } from "@proto/services/audience/dashboard_pb";
 import { GetCurrentSessionResponseSchema } from "@proto/services/common/me_pb";
 import {
+  type EnqueueBenchmarkJobRequest,
   EnqueueBenchmarkJobResponseSchema,
   GetBenchmarkJobResponseSchema,
   ListBenchmarkJobsResponseSchema,
-  type EnqueueBenchmarkJobRequest,
 } from "@proto/services/contestant/benchmark_pb";
 import { ListClarificationsResponseSchema } from "@proto/services/contestant/clarifications_pb";
 import { GetCloudFormationResponseSchema } from "@proto/services/contestant/cloud_formation_pb";
 import { ListNotificationsResponseSchema } from "@proto/services/contestant/notifications_pb";
+import React from "react";
+import ReactDOM from "react-dom";
 
 type Outcome = "pass" | "fail" | "error";
 
@@ -40,7 +40,10 @@ interface StoredJob extends MockConfig {
 const storageKey = "isutori-mock-portal-jobs";
 const team = { id: 1n, name: "isutori" };
 const avatarUrl =
-  "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1" fill="#f5a"/></svg>');
+  "data:image/svg+xml," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1" fill="#f5a"/></svg>',
+  );
 const contestStartMs = Date.now() - 60 * 60 * 1000;
 const contest = create(ContestSchema, {
   status: Contest_Status.STARTED,
@@ -125,17 +128,21 @@ function toProto(j: StoredJob, now: number): BenchmarkJob {
     finished: true,
     passed,
     score,
-    scoreBreakdown: { $typeName: "isuxportal.proto.resources.BenchmarkResult.ScoreBreakdown", raw: score, deduction: 0n },
+    scoreBreakdown: {
+      $typeName: "isuxportal.proto.resources.BenchmarkResult.ScoreBreakdown",
+      raw: score,
+      deduction: 0n,
+    },
     markedAt: timestampFromMs(finishedMs),
     execution: {
       $typeName: "isuxportal.proto.resources.BenchmarkResult.Execution",
       reason: passed ? "" : "fail: mock portal was configured to fail",
       stdout: [
-        "time=00:00:00.000Z level=INFO msg=\"initialize\"",
-        "time=00:00:01.000Z level=INFO msg=\"load\"",
+        'time=00:00:00.000Z level=INFO msg="initialize"',
+        'time=00:00:01.000Z level=INFO msg="load"',
         passed
           ? `time=00:01:00.000Z level=INFO msg="score" score=${score}`
-          : "time=00:00:30.000Z level=ERROR msg=\"validation failed\"",
+          : 'time=00:00:30.000Z level=ERROR msg="validation failed"',
       ].join("\n"),
       stderr: "",
       exitStatus: passed ? 0 : 1,
@@ -214,7 +221,10 @@ class MockApiClient extends ApiClient {
       .map((j) => toProto(j, now))
       .filter((j) => j.status === BenchmarkJob_Status.FINISHED)
       .map((j) => ({ score: j.score, startedAt: j.startedAt, markedAt: j.finishedAt }));
-    const best = scores.reduce<(typeof scores)[number] | undefined>((a, s) => (a && a.score >= s.score ? a : s), undefined);
+    const best = scores.reduce<(typeof scores)[number] | undefined>(
+      (a, s) => (a && a.score >= s.score ? a : s),
+      undefined,
+    );
     const item = create(LeaderboardItemSchema, {
       team,
       latestScore: scores.at(-1),
@@ -249,7 +259,7 @@ function readConfig(): MockConfig {
   return JSON.parse(meta.content);
 }
 
-(async function () {
+(async () => {
   const client = new MockApiClient(readConfig());
   const session = await client.getCurrentSession();
   updateNavBarSession(session);

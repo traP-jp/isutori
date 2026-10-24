@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { setImmediate } from "node:timers/promises";
 import test from "node:test";
+import { setImmediate } from "node:timers/promises";
 import { runInNewContext } from "node:vm";
 
 const source = readFileSync(new URL("../../internal/userscript/isutori.user.js", import.meta.url), "utf8");
@@ -48,10 +48,18 @@ function page(initialState?: object, automatic = false) {
     beforeSubmit: () => {},
   };
   const select = {
-    get options() { return controls.options; },
-    get value() { return controls.value; },
-    set value(value: string) { controls.value = value; },
-    get selectedOptions() { return controls.options.filter((option) => option.value === controls.value); },
+    get options() {
+      return controls.options;
+    },
+    get value() {
+      return controls.value;
+    },
+    set value(value: string) {
+      controls.value = value;
+    },
+    get selectedOptions() {
+      return controls.options.filter((option) => option.value === controls.value);
+    },
     matches: () => controls.selectDisabled,
     dispatchEvent() {
       if (controls.ignoreSelection) controls.value = "1";
@@ -61,33 +69,55 @@ function page(initialState?: object, automatic = false) {
   const button = {
     textContent: "Enqueue",
     matches: () => controls.buttonDisabled,
-    getAttribute: () => controls.ariaDisabled ? "true" : null,
-    click() { controls.clicks++; location.pathname = "/contestant/benchmark_jobs/1"; },
+    getAttribute: () => (controls.ariaDisabled ? "true" : null),
+    click() {
+      controls.clicks++;
+      location.pathname = "/contestant/benchmark_jobs/1";
+    },
   };
   const cards = ["Summary", "Conclusion", "Result"].map((title) => ({
-    get innerText() { return title === "Summary" ? `ID: ${controls.jobId}` : `Score: ${controls.scoreText}`; },
+    get innerText() {
+      return title === "Summary" ? `ID: ${controls.jobId}` : `Score: ${controls.scoreText}`;
+    },
     querySelector(selector: string) {
       if (selector === ".card-header-title") return { textContent: title };
       if (selector === ".tag") return { textContent: controls.running ? "RUNNING" : controls.status };
       return { innerText: "official result" };
     },
-    querySelectorAll() { return controls.resultTags.map(textContent => ({textContent})); },
+    querySelectorAll() {
+      return controls.resultTags.map((textContent) => ({ textContent }));
+    },
   }));
   const document = {
-    querySelector(selector: string) { return selector === "select" ? select : null; },
+    querySelector(selector: string) {
+      return selector === "select" ? select : null;
+    },
     querySelectorAll(selector: string) {
       if (selector === "button") return controls.buttonPresent ? [button] : [];
       if (selector === ".card") return cards;
       return [];
     },
-    createElement() { return { style: {}, textContent: "", setAttribute() {} }; },
-    body: { append(element: { textContent: string }) { badges.push(element); } },
+    createElement() {
+      return { style: {}, textContent: "", setAttribute() {} };
+    },
+    body: {
+      append(element: { textContent: string }) {
+        badges.push(element);
+      },
+    },
   };
   let now = 0;
   const sandbox = {
-    document, location, URLSearchParams, Event,
+    document,
+    location,
+    URLSearchParams,
+    Event,
     Date: { now: () => now },
-    history: { replaceState() { location.hash = ""; } },
+    history: {
+      replaceState() {
+        location.hash = "";
+      },
+    },
     sessionStorage: {
       getItem: (key: string) => storage.get(key) ?? null,
       setItem(key: string, value: string) {
@@ -105,22 +135,44 @@ function page(initialState?: object, automatic = false) {
         callback();
       });
     },
-    prompt() { controls.prompts++; return controls.target; },
+    prompt() {
+      controls.prompts++;
+      return controls.target;
+    },
     alert: (value: string) => alerts.push(value),
     GM_registerMenuCommand: (name: string, callback: () => void | Promise<void>) => menus.set(name, callback),
-    GM_xmlhttpRequest(request: { url: string; data: string; onload: (response: { status: number; responseText: string }) => void }) {
+    GM_xmlhttpRequest(request: {
+      url: string;
+      data: string;
+      onload: (response: { status: number; responseText: string }) => void;
+    }) {
       if (request.url.endsWith("/api/userscript")) {
         controls.handshakes++;
-        request.onload({status:200,responseText:JSON.stringify({expected:"sha256:expected",actual:"sha256:actual",status:controls.verification})});
+        request.onload({
+          status: 200,
+          responseText: JSON.stringify({
+            expected: "sha256:expected",
+            actual: "sha256:actual",
+            status: controls.verification,
+          }),
+        });
         return;
       }
       posted.push(request.data);
-      request.onload({ status: 204, responseText:"" });
+      request.onload({ status: 204, responseText: "" });
     },
   };
   return {
-    controls, alerts, posted, phases, storage, location, badges,
-    start() { runInNewContext(source, sandbox); },
+    controls,
+    alerts,
+    posted,
+    phases,
+    storage,
+    location,
+    badges,
+    start() {
+      runInNewContext(source, sandbox);
+    },
     read() {
       const callback = menus.get("isutori: read this page");
       assert.ok(callback);
@@ -140,7 +192,12 @@ test("the menu selects the explicit target without submitting or creating a run"
   p.start();
   await p.check();
   assert.equal(p.controls.selected, "2");
-  assert.deepEqual(JSON.parse(p.alerts[0]), { requested: "2", selected: "2: 192.168.0.12", ready: true, enqueued: false });
+  assert.deepEqual(JSON.parse(p.alerts[0]), {
+    requested: "2",
+    selected: "2: 192.168.0.12",
+    ready: true,
+    enqueued: false,
+  });
   assert.equal(p.controls.clicks, 0);
   assert.deepEqual(p.posted, []);
   assert.equal(p.storage.size, 0);
@@ -161,7 +218,14 @@ test("preparation waits for real options and an enabled button", async () => {
   assert.equal(p.controls.ticks, 4);
 });
 
-for (const mode of ["unknown target", "ambiguous target", "selection ignored", "disabled", "aria-disabled", "missing button"]) {
+for (const mode of [
+  "unknown target",
+  "ambiguous target",
+  "selection ignored",
+  "disabled",
+  "aria-disabled",
+  "missing button",
+]) {
   test(`preparation reports ${mode} without registering a job`, async () => {
     const p = page();
     if (mode === "unknown target") p.controls.target = "9";
@@ -293,29 +357,57 @@ test("a reload on the new job page resumes result collection without preparation
 });
 
 test("an unverified script never prepares or registers", async () => {
- for (const status of ["mismatched", "unknown"]) {
-  const p=page(undefined,true);p.controls.verification=status;p.start();await setImmediate();
-  assert.equal(p.controls.handshakes,1);assert.equal(p.controls.selected,"1");assert.equal(p.controls.clicks,0);assert.equal(p.posted.length,0);
-  assert.match(JSON.parse(p.storage.get(storageKey) ?? "null").note,/BLOCKED/);
- }
+  for (const status of ["mismatched", "unknown"]) {
+    const p = page(undefined, true);
+    p.controls.verification = status;
+    p.start();
+    await setImmediate();
+    assert.equal(p.controls.handshakes, 1);
+    assert.equal(p.controls.selected, "1");
+    assert.equal(p.controls.clicks, 0);
+    assert.equal(p.posted.length, 0);
+    assert.match(JSON.parse(p.storage.get(storageKey) ?? "null").note, /BLOCKED/);
+  }
 });
 
 test("the legacy launch URL cannot start a new automatic run", async () => {
- const p=page(undefined,true);p.location.hash="#autobench=old&receiver=http://localhost:7878&target=2";
- p.start();await setImmediate();
- assert.equal(p.controls.handshakes,0);assert.equal(p.controls.clicks,0);assert.equal(p.storage.size,0);
+  const p = page(undefined, true);
+  p.location.hash = "#autobench=old&receiver=http://localhost:7878&target=2";
+  p.start();
+  await setImmediate();
+  assert.equal(p.controls.handshakes, 0);
+  assert.equal(p.controls.clicks, 0);
+  assert.equal(p.storage.size, 0);
 });
 
 test("a blocked run can verify on reload without duplicate registration", async () => {
- const p=page(undefined,true);p.controls.verification="mismatched";p.start();await setImmediate();
- assert.equal(p.controls.clicks,0);p.controls.verification="matched";p.start();await setImmediate();
- assert.equal(p.controls.clicks,1);assert.equal(p.posted.length,1);assert.equal(p.controls.handshakes,2);
- p.start();await setImmediate();assert.equal(p.controls.clicks,1);assert.equal(p.controls.handshakes,2);
+  const p = page(undefined, true);
+  p.controls.verification = "mismatched";
+  p.start();
+  await setImmediate();
+  assert.equal(p.controls.clicks, 0);
+  p.controls.verification = "matched";
+  p.start();
+  await setImmediate();
+  assert.equal(p.controls.clicks, 1);
+  assert.equal(p.posted.length, 1);
+  assert.equal(p.controls.handshakes, 2);
+  p.start();
+  await setImmediate();
+  assert.equal(p.controls.clicks, 1);
+  assert.equal(p.controls.handshakes, 2);
 });
 
-
 test("verification recovery clears the blocked badge while the job is still running", async () => {
-  const p = page({ runId: "test", receiver: "http://localhost:7878", target: "2", phase: "waiting", job: { jobId: "1" }, startedAt: 0, note: "BLOCKED: userscript verification: mismatched" });
+  const p = page({
+    runId: "test",
+    receiver: "http://localhost:7878",
+    target: "2",
+    phase: "waiting",
+    job: { jobId: "1" },
+    startedAt: 0,
+    note: "BLOCKED: userscript verification: mismatched",
+  });
   p.location.pathname = "/contestant/benchmark_jobs/1";
   p.controls.running = true;
   let checked = false;
@@ -331,7 +423,6 @@ test("verification recovery clears the blocked badge while the job is still runn
   assert.equal(p.controls.clicks, 0);
   assert.equal(p.posted.length, 1);
 });
-
 
 for (const state of ["running", "pending", "old job", "result pending", "missing verdict", "missing score"]) {
   test(`result reader waits for ${state}`, () => {
@@ -349,7 +440,14 @@ for (const state of ["running", "pending", "old job", "result pending", "missing
   });
 }
 
-for (const state of ["wrong page", "unknown status", "conflicting verdicts", "partial number", "fraction", "unsafe integer"]) {
+for (const state of [
+  "wrong page",
+  "unknown status",
+  "conflicting verdicts",
+  "partial number",
+  "fraction",
+  "unsafe integer",
+]) {
   test(`result reader rejects ${state}`, () => {
     const p = page();
     p.location.pathname = state === "wrong page" ? "/contestant" : "/contestant/benchmark_jobs/1";
@@ -367,7 +465,10 @@ for (const outcome of ["passed", "failed", "errored"]) {
   test(`result reader returns a final ${outcome} benchmark`, () => {
     const p = page();
     p.location.pathname = "/contestant/benchmark_jobs/1";
-    if (outcome === "failed") { p.controls.resultTags = ["Finished", "Failed"]; p.controls.scoreText = "0"; }
+    if (outcome === "failed") {
+      p.controls.resultTags = ["Finished", "Failed"];
+      p.controls.scoreText = "0";
+    }
     if (outcome === "errored") p.controls.status = "ERRORED";
     p.start();
     const result = JSON.parse(p.read() ?? "null");
@@ -377,7 +478,14 @@ for (const outcome of ["passed", "failed", "errored"]) {
 }
 
 test("automatic result collection reports navigation to another job as an acquisition error", async () => {
-  const p = page({runId: "test", receiver: "http://localhost:7878", target: "2", phase: "waiting", job: {jobId: "2"}, startedAt: 0});
+  const p = page({
+    runId: "test",
+    receiver: "http://localhost:7878",
+    target: "2",
+    phase: "waiting",
+    job: { jobId: "2" },
+    startedAt: 0,
+  });
   p.location.pathname = "/contestant/benchmark_jobs/1";
   p.start();
   await setImmediate();
@@ -387,7 +495,14 @@ test("automatic result collection reports navigation to another job as an acquis
 });
 
 test("a job that never publishes a final result times out without publishing its score", async () => {
-  const p = page({runId: "test", receiver: "http://localhost:7878", target: "2", phase: "waiting", job: {jobId: "1"}, startedAt: -20 * 60 * 1000});
+  const p = page({
+    runId: "test",
+    receiver: "http://localhost:7878",
+    target: "2",
+    phase: "waiting",
+    job: { jobId: "1" },
+    startedAt: -20 * 60 * 1000,
+  });
   p.location.pathname = "/contestant/benchmark_jobs/1";
   p.controls.running = true;
   p.start();

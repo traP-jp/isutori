@@ -21,6 +21,8 @@ cd mockportal
 pnpm install
 pnpm exec playwright install chromium   # 初回のみ
 pnpm build       # 画面をビルドして dist/ を更新する
+pnpm lint        # Biome で書式と lint を検査する。対象にユーザースクリプトを含む
+pnpm format      # Biome で書式を整え、直せる lint の指摘を直す
 pnpm typecheck   # 画面、スクリプト、ユーザースクリプトの型検査
 pnpm test:unit   # ブラウザを起動せず、登録前の準備と状態の遷移を確かめる
 pnpm test        # 上の検査と、偽ポータルに対するブラウザでの検査を行う
