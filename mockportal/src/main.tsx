@@ -40,7 +40,10 @@ interface StoredJob extends MockConfig {
 const storageKey = "isutori-mock-portal-jobs";
 const team = { id: 1n, name: "isutori" };
 const avatarUrl =
-  "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1" fill="#f5a"/></svg>');
+  "data:image/svg+xml," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1" fill="#f5a"/></svg>',
+  );
 const contestStartMs = Date.now() - 60 * 60 * 1000;
 const contest = create(ContestSchema, {
   status: Contest_Status.STARTED,
@@ -125,17 +128,21 @@ function toProto(j: StoredJob, now: number): BenchmarkJob {
     finished: true,
     passed,
     score,
-    scoreBreakdown: { $typeName: "isuxportal.proto.resources.BenchmarkResult.ScoreBreakdown", raw: score, deduction: 0n },
+    scoreBreakdown: {
+      $typeName: "isuxportal.proto.resources.BenchmarkResult.ScoreBreakdown",
+      raw: score,
+      deduction: 0n,
+    },
     markedAt: timestampFromMs(finishedMs),
     execution: {
       $typeName: "isuxportal.proto.resources.BenchmarkResult.Execution",
       reason: passed ? "" : "fail: mock portal was configured to fail",
       stdout: [
-        "time=00:00:00.000Z level=INFO msg=\"initialize\"",
-        "time=00:00:01.000Z level=INFO msg=\"load\"",
+        'time=00:00:00.000Z level=INFO msg="initialize"',
+        'time=00:00:01.000Z level=INFO msg="load"',
         passed
           ? `time=00:01:00.000Z level=INFO msg="score" score=${score}`
-          : "time=00:00:30.000Z level=ERROR msg=\"validation failed\"",
+          : 'time=00:00:30.000Z level=ERROR msg="validation failed"',
       ].join("\n"),
       stderr: "",
       exitStatus: passed ? 0 : 1,
@@ -214,7 +221,10 @@ class MockApiClient extends ApiClient {
       .map((j) => toProto(j, now))
       .filter((j) => j.status === BenchmarkJob_Status.FINISHED)
       .map((j) => ({ score: j.score, startedAt: j.startedAt, markedAt: j.finishedAt }));
-    const best = scores.reduce<(typeof scores)[number] | undefined>((a, s) => (a && a.score >= s.score ? a : s), undefined);
+    const best = scores.reduce<(typeof scores)[number] | undefined>(
+      (a, s) => (a && a.score >= s.score ? a : s),
+      undefined,
+    );
     const item = create(LeaderboardItemSchema, {
       team,
       latestScore: scores.at(-1),

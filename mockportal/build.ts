@@ -35,7 +35,9 @@ const css = sass.compile(`${cache}/portal/app/javascript/packs/application.scss`
 writeFileSync(`${dist}/app.css`, css.css);
 
 const bundledFiles = [...Object.keys(bundle.metafile.inputs), ...css.loadedUrls].map((f) => realpathSync(f));
-const packageRoots = new Set(bundledFiles.flatMap((f) => f.match(/^(.*\/node_modules\/(?:@[^/]+\/)?[^/]+)\//)?.[1] ?? []));
+const packageRoots = new Set(
+  bundledFiles.flatMap((f) => f.match(/^(.*\/node_modules\/(?:@[^/]+\/)?[^/]+)\//)?.[1] ?? []),
+);
 const notices = [...packageRoots].map((root) => {
   const pkg = JSON.parse(readFileSync(`${root}/package.json`, "utf8"));
   const shipped = readdirSync(root).find((f) => /^(licen[cs]e|copying)(\.|$)/i.test(f));

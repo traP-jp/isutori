@@ -1,0 +1,10 @@
+{
+  "$schema": "./mockportal/node_modules/@biomejs/biome/configuration_schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": {
+    "includes": ["mockportal/**", "internal/userscript/*.js"]
+  },
+  "formatter": { "indentStyle": "space", "lineWidth": 120 },
+  "linter": { "rules": { "recommended": true } },
+  "assist": { "actions": { "source": { "organizeImports": "on" } } }
+}
