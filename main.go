@@ -98,16 +98,7 @@ func dispatch(ctx, abort context.Context, args []string) (int, error) {
 	case "bench":
 		return bench(ctx, abort, rest)
 	case "publish":
-		if len(rest) != 1 {
-			return 1, errors.New("usage: isutori publish RUN_DIR")
-		}
-		summary, err := runner.Publish(ctx, rest[0], os.Stderr)
-		if summary != nil {
-			if encodeErr := json.NewEncoder(os.Stdout).Encode(summary); encodeErr != nil {
-				err = errors.Join(err, encodeErr)
-			}
-		}
-		return exitCode(err)
+		return exitCode(publish(ctx, rest))
 	case "guard":
 		return exitCode(guard(ctx))
 	case "receive":
@@ -189,6 +180,17 @@ func bench(ctx, abort context.Context, args []string) (int, error) {
 	return 0, nil
 }
 
+func publish(ctx context.Context, args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: isutori publish RUN_DIR")
+	}
+	summary, err := runner.Publish(ctx, args[0], os.Stderr)
+	if summary != nil {
+		err = errors.Join(err, json.NewEncoder(os.Stdout).Encode(summary))
+	}
+	return err
+}
+
 func guard(ctx context.Context) error {
 	ticket := os.Getenv("ISUTORI_TICKET_ID")
 	path := os.Getenv("ISUTORI_CONFIG")
@@ -260,11 +262,16 @@ func awaitResult(ctx context.Context, listen, scriptPath string, listening func(
 		fmt.Fprintln(os.Stderr, "isutori: waiting for a verified userscript; manual input remains available")
 	}
 	listening(runID)
-	res, err := receiver.Wait(ctx, ln, runID, scriptPath, os.Stderr, func(res receiver.Result) error {
-		if res.Error != "" {
-			return nil
-		}
-		return runner.SaveBenchResult(out, runner.BenchResult{Passed: res.Passed, Score: res.Score, Message: res.Message, Userscript: res.Userscript})
+	res, err := receiver.Wait(ctx, ln, receiver.Options{
+		RunID:      runID,
+		ScriptPath: scriptPath,
+		Log:        os.Stderr,
+		Save: func(res receiver.Result) error {
+			if res.Error != "" {
+				return nil
+			}
+			return runner.SaveBenchResult(out, runner.BenchResult{Passed: res.Passed, Score: res.Score, Message: res.Message, Userscript: res.Userscript})
+		},
 	})
 	if err != nil {
 		return err

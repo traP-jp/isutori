@@ -18,6 +18,7 @@ import (
 
 	"github.com/traP-jp/isutori/internal/config"
 	"github.com/traP-jp/isutori/internal/queue"
+	"github.com/traP-jp/isutori/internal/strictjson"
 	"github.com/traP-jp/isutori/internal/userscript"
 )
 
@@ -35,6 +36,18 @@ type Options struct {
 	Requester string
 	Log       io.Writer
 }
+
+// Stage statuses recorded in run.json.
+const (
+	StageRunning   = "running"
+	StageSucceeded = "succeeded"
+	StageFailed    = "failed"
+	StageSkipped   = "skipped"
+	// StageUnknown replaces StageRunning when a retry finds no end record.
+	StageUnknown = "unknown"
+)
+
+const stageCleanup = "cleanup"
 
 type Stage struct {
 	Name    string  `json:"name"`
@@ -68,7 +81,7 @@ func Run(ctx context.Context, opts Options) (summary *Summary, err error) {
 	root := opts.RepoRoot
 	ticketID := rand.Text()[:8]
 	runID := time.Now().Format("20060102T150405") + "-" + ticketID
-	runDir := filepath.Join(root, ".isutori", "runs", runID)
+	runDir := runDirOf(root, runID)
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		return nil, err
 	}
@@ -87,11 +100,10 @@ func Run(ctx context.Context, opts Options) (summary *Summary, err error) {
 	prepLog := log.New(out, "isutori: ", log.Ltime)
 	prepLog.Printf("preparing run %s in %s", runID, runDir)
 	defer cleanupRefs(root, runID, prepLog)
-	appCommit, opsCommit, ref, err := prepareRefs(ctx, root, runID, opts.Ref, prepLog)
+	refs, err := prepareRefs(ctx, root, runID, opts.Ref, prepLog)
 	if err != nil {
 		return nil, err
 	}
-	opts.Ref = ref
 	opsDir := filepath.Join(runDir, "ops")
 	if err := os.MkdirAll(opsDir, 0o755); err != nil {
 		return nil, err
@@ -101,43 +113,28 @@ func Run(ctx context.Context, opts Options) (summary *Summary, err error) {
 		return nil, err
 	}
 	defer lock.Close()
-	if err := extract(ctx, root, opsCommit, opsDir); err != nil {
+	if err := extract(ctx, root, refs.Ops, opsDir); err != nil {
 		return nil, err
 	}
-	cfgPath := filepath.Join(opsDir, config.FileName)
-	if _, err := os.Stat(cfgPath); errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("%s is not on %s; commit it and push it there first", config.FileName, opsCommit)
+	if _, err := os.Stat(filepath.Join(opsDir, config.FileName)); errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("%s is not on %s; commit it and push it there first", config.FileName, refs.Ops)
 	}
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return nil, fmt.Errorf("%s at ops ref %s: %w", config.FileName, opsCommit, err)
-	}
-	binDir, err := linkSelf(runDir)
-	if err != nil {
-		return nil, err
-	}
-
-	r := &run{
-		cfg:    cfg,
-		q:      queue.New(cfg.Queue),
-		opsDir: opsDir,
-		log:    log.New(out, "isutori: ", log.Ltime),
-		out:    out,
-		summary: &Summary{
-			RunID:  runID,
-			RunDir: runDir,
-			Ticket: queue.Ticket{
-				ID:         ticketID,
-				Requester:  opts.Requester,
-				Ref:        opts.Ref,
-				AppCommit:  appCommit,
-				Mode:       opts.Mode,
-				EnqueuedAt: time.Now(),
-			},
-			OpsCommit: opsCommit,
+	r, err := loadRun(root, &Summary{
+		RunID:  runID,
+		RunDir: runDir,
+		Ticket: queue.Ticket{
+			ID:         ticketID,
+			Requester:  opts.Requester,
+			Ref:        refs.Name,
+			AppCommit:  refs.App,
+			Mode:       opts.Mode,
+			EnqueuedAt: time.Now(),
 		},
+		OpsCommit: refs.Ops,
+	}, ticketID, out)
+	if err != nil {
+		return nil, err
 	}
-	r.env = environment(r.summary, root, cfgPath, binDir)
 	if err := r.writeSummary(); err != nil {
 		return r.summary, err
 	}
@@ -220,7 +217,7 @@ func (r *run) execute(parent, abort context.Context) error {
 		r.log.Print("WARNING: skipping cleanup because the servers may already belong to the next ticket")
 		return errors.Join(runErr, cause)
 	}
-	return errors.Join(runErr, r.stage(leaseCtx, "cleanup", r.hook(h.Cleanup)))
+	return errors.Join(runErr, r.stage(leaseCtx, stageCleanup, r.hook(h.Cleanup)))
 }
 
 func (r *run) finish(ctx context.Context) error {
@@ -237,6 +234,7 @@ func (r *run) finish(ctx context.Context) error {
 		return errors.Join(runErr, context.Cause(ctx))
 	}
 	if runErr != nil {
+		// publish shares run.json, so it must already show the failure.
 		r.summary.Error = runErr.Error()
 	}
 	return errors.Join(runErr, r.stage(ctx, "publish", r.hook(r.cfg.Hooks.Publish)))
@@ -317,16 +315,16 @@ func (r *run) waitHead(ctx context.Context, name string) error {
 func (r *run) stage(ctx context.Context, name string, fn func(context.Context) error) error {
 	r.log.Printf("== %s", name)
 	index := len(r.summary.Stages)
-	r.summary.Stages = append(r.summary.Stages, Stage{Name: name, Status: "running"})
+	r.summary.Stages = append(r.summary.Stages, Stage{Name: name, Status: StageRunning})
 	if fn == nil {
-		r.summary.Stages[index].Status = "skipped"
+		r.summary.Stages[index].Status = StageSkipped
 		return r.writeSummary()
 	}
 	saveErr := r.writeSummary()
 	if saveErr != nil {
 		saveErr = fmt.Errorf("before %s: %w", name, saveErr)
 		// Local recording failures must not prevent server cleanup.
-		if name != "cleanup" {
+		if name != stageCleanup {
 			return saveErr
 		}
 	}
@@ -334,9 +332,9 @@ func (r *run) stage(ctx context.Context, name string, fn func(context.Context) e
 	err := fn(ctx)
 	s := &r.summary.Stages[index]
 	s.Seconds = time.Since(start).Seconds()
-	s.Status = "succeeded"
+	s.Status = StageSucceeded
 	if err != nil {
-		s.Status = "failed"
+		s.Status = StageFailed
 		s.Error = err.Error()
 		err = fmt.Errorf("%s: %w", name, err)
 		r.log.Printf("FAILED %v", err)
@@ -462,13 +460,8 @@ func readBenchResult(path string) (*BenchResult, error) {
 		BenchResult
 		Passed *bool `json:"passed"`
 	}
-	dec := json.NewDecoder(bytes.NewReader(b))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&v); err != nil {
+	if err := strictjson.Decode(bytes.NewReader(b), &v); err != nil {
 		return nil, fmt.Errorf("$ISUTORI_BENCH_RESULT: %w", err)
-	}
-	if err := dec.Decode(new(any)); err != io.EOF {
-		return nil, errors.New("$ISUTORI_BENCH_RESULT: expected a single JSON object")
 	}
 	if v.Passed == nil {
 		return nil, errors.New(`$ISUTORI_BENCH_RESULT: "passed" is missing`)
@@ -486,7 +479,7 @@ func writeJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".run-*.json")
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
 	if err != nil {
 		return err
 	}
@@ -512,7 +505,42 @@ func writeJSON(path string, v any) error {
 	return dir.Sync()
 }
 
-func environment(s *Summary, root, cfgPath, binDir string) []string {
+func runDirOf(root, runID string) string {
+	return filepath.Join(root, ".isutori", "runs", runID)
+}
+
+func repoRootOf(runDir string) (string, error) {
+	runs := filepath.Dir(runDir)
+	if filepath.Base(runs) != "runs" || filepath.Base(filepath.Dir(runs)) != ".isutori" {
+		return "", errors.New("not a run directory under .isutori/runs; use the original directory")
+	}
+	return filepath.Dir(filepath.Dir(runs)), nil
+}
+
+// loadRun wires a run to the configuration and hooks saved in its directory.
+func loadRun(root string, summary *Summary, ticketID string, out io.Writer) (*run, error) {
+	opsDir := filepath.Join(summary.RunDir, "ops")
+	cfgPath := filepath.Join(opsDir, config.FileName)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return nil, fmt.Errorf("%s at ops ref %s: %w", config.FileName, summary.OpsCommit, err)
+	}
+	binDir, err := linkSelf(summary.RunDir)
+	if err != nil {
+		return nil, err
+	}
+	return &run{
+		cfg:     cfg,
+		q:       queue.New(cfg.Queue),
+		opsDir:  opsDir,
+		env:     environment(summary, ticketID, root, cfgPath, binDir),
+		log:     log.New(out, "isutori: ", log.Ltime),
+		out:     out,
+		summary: summary,
+	}, nil
+}
+
+func environment(s *Summary, ticketID, root, cfgPath, binDir string) []string {
 	return append(os.Environ(),
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"ISUTORI_RUN_ID="+s.RunID,
@@ -524,13 +552,18 @@ func environment(s *Summary, root, cfgPath, binDir string) []string {
 		"ISUTORI_OPS_COMMIT="+s.OpsCommit,
 		"ISUTORI_MODE="+s.Ticket.Mode,
 		"ISUTORI_REQUESTER="+s.Ticket.Requester,
-		"ISUTORI_TICKET_ID="+s.Ticket.ID,
+		"ISUTORI_TICKET_ID="+ticketID,
 	)
 }
 
-// Publish retries only the saved publish hook, without acquiring a server lease.
+// Publish retries only the saved publish hook, without a ticket, so it never
+// holds the servers.
 func Publish(ctx context.Context, runDir string, out io.Writer) (*Summary, error) {
 	runDir, err := filepath.Abs(runDir)
+	if err != nil {
+		return nil, err
+	}
+	root, err := repoRootOf(runDir)
 	if err != nil {
 		return nil, err
 	}
@@ -547,9 +580,7 @@ func Publish(ctx context.Context, runDir string, out io.Writer) (*Summary, error
 	if err := json.Unmarshal(b, &summary); err != nil {
 		return nil, err
 	}
-	if summary.RunDir != runDir || summary.RunID != filepath.Base(runDir) ||
-		filepath.Base(filepath.Dir(runDir)) != "runs" ||
-		filepath.Base(filepath.Dir(filepath.Dir(runDir))) != ".isutori" {
+	if summary.RunDir != runDir || summary.RunID != filepath.Base(runDir) {
 		return nil, errors.New("run directory does not match run.json; use the original directory")
 	}
 	result, err := readBenchResult(filepath.Join(runDir, benchResultFile))
@@ -561,41 +592,23 @@ func Publish(ctx context.Context, runDir string, out io.Writer) (*Summary, error
 	}
 	summary.Bench = result
 	for i := range summary.Stages {
-		if summary.Stages[i].Status == "running" {
-			summary.Stages[i].Status = "unknown"
+		if summary.Stages[i].Status == StageRunning {
+			summary.Stages[i].Status = StageUnknown
 		}
-	}
-	opsDir := filepath.Join(runDir, "ops")
-	cfgPath := filepath.Join(opsDir, config.FileName)
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return nil, err
-	}
-	if cfg.Hooks.Publish == "" {
-		return nil, errors.New("no publish hook configured in the saved run")
-	}
-	binRoot, err := os.MkdirTemp(runDir, ".publish-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(binRoot)
-	binDir, err := linkSelf(binRoot)
-	if err != nil {
-		return nil, err
 	}
 	logFile, err := os.OpenFile(filepath.Join(runDir, "run.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err
 	}
 	defer logFile.Close()
-	out = io.MultiWriter(out, logFile)
-	r := &run{
-		cfg: cfg, opsDir: opsDir, summary: &summary, out: out,
-		env: environment(&summary, filepath.Dir(filepath.Dir(filepath.Dir(runDir))), cfgPath, binDir),
-		log: log.New(out, "isutori: ", log.Ltime),
+	r, err := loadRun(root, &summary, "", io.MultiWriter(out, logFile))
+	if err != nil {
+		return nil, err
 	}
-	r.env = append(r.env, "ISUTORI_TICKET_ID=")
-	return &summary, r.stage(ctx, "publish", r.hook(cfg.Hooks.Publish))
+	if r.cfg.Hooks.Publish == "" {
+		return nil, errors.New("no publish hook configured in the saved run")
+	}
+	return &summary, r.stage(ctx, "publish", r.hook(r.cfg.Hooks.Publish))
 }
 
 func lockRun(runDir string) (*os.File, error) {
@@ -620,7 +633,12 @@ func linkSelf(runDir string) (string, error) {
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		return "", err
 	}
-	return binDir, os.Symlink(self, filepath.Join(binDir, "isutori"))
+	// A retried publish may run from another executable than the first run.
+	link := filepath.Join(binDir, "isutori")
+	if err := os.Remove(link); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	return binDir, os.Symlink(self, link)
 }
 
 func extract(ctx context.Context, root, commit, dest string) error {

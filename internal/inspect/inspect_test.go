@@ -289,7 +289,7 @@ func TestInspectionIdentity(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil || info.Userscript.Status != "matched" {
 		t.Fatalf("handshake: %d %s %v", w.Code, w.Body, err)
 	}
-	for _, status := range []string{"matched", "mismatched", "unknown"} {
+	for _, status := range []userscript.Status{"matched", "mismatched", "unknown"} {
 		if status == "mismatched" {
 			if err := os.WriteFile(path, []byte(strings.Replace(script, "async prepare(target)", "async prepare(target /* changed */)", 1)), 0600); err != nil {
 				t.Fatal(err)
