@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
-import { chromium, type Browser, type Page } from "playwright";
+import { fileURLToPath } from "node:url";
+import { type Browser, chromium, type Page } from "playwright";
 
 declare global {
   interface Window {

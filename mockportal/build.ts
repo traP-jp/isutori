@@ -47,4 +47,4 @@ const notices = [...packageRoots].map((root) => {
 });
 notices.sort();
 notices.unshift(`isucon/isucon14-portal@${commit}\nLicense: MIT\n\n${readFileSync(`${cache}/LICENSE`, "utf8").trim()}`);
-writeFileSync(`${dist}/THIRD_PARTY_LICENSES`, notices.join("\n\n----------------------------------------\n\n") + "\n");
+writeFileSync(`${dist}/THIRD_PARTY_LICENSES`, `${notices.join("\n\n----------------------------------------\n\n")}\n`);

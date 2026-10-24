@@ -1,26 +1,26 @@
-import React from "react";
-import ReactDOM from "react-dom";
 import { create } from "@bufbuild/protobuf";
 import { timestampFromMs } from "@bufbuild/protobuf/wkt";
 import { ApiClient, ApiError } from "@portal/ApiClient";
 import { ContestantApp } from "@portal/ContestantApp";
 import { updateNavBarSession } from "@portal/NavbarSession";
 import { ErrorSchema } from "@proto/error_pb";
-import { BenchmarkJobSchema, BenchmarkJob_Status, type BenchmarkJob } from "@proto/resources/benchmark_job_pb";
+import { type BenchmarkJob, BenchmarkJob_Status, BenchmarkJobSchema } from "@proto/resources/benchmark_job_pb";
 import { Contest_Status, ContestSchema } from "@proto/resources/contest_pb";
 import { ContestantInstance_Status, ContestantInstanceSchema } from "@proto/resources/contestant_instance_pb";
-import { LeaderboardItemSchema, type LeaderboardItem } from "@proto/resources/leaderboard_pb";
+import { type LeaderboardItem, LeaderboardItemSchema } from "@proto/resources/leaderboard_pb";
 import { DashboardResponseSchema } from "@proto/services/audience/dashboard_pb";
 import { GetCurrentSessionResponseSchema } from "@proto/services/common/me_pb";
 import {
+  type EnqueueBenchmarkJobRequest,
   EnqueueBenchmarkJobResponseSchema,
   GetBenchmarkJobResponseSchema,
   ListBenchmarkJobsResponseSchema,
-  type EnqueueBenchmarkJobRequest,
 } from "@proto/services/contestant/benchmark_pb";
 import { ListClarificationsResponseSchema } from "@proto/services/contestant/clarifications_pb";
 import { GetCloudFormationResponseSchema } from "@proto/services/contestant/cloud_formation_pb";
 import { ListNotificationsResponseSchema } from "@proto/services/contestant/notifications_pb";
+import React from "react";
+import ReactDOM from "react-dom";
 
 type Outcome = "pass" | "fail" | "error";
 
@@ -259,7 +259,7 @@ function readConfig(): MockConfig {
   return JSON.parse(meta.content);
 }
 
-(async function () {
+(async () => {
   const client = new MockApiClient(readConfig());
   const session = await client.getCurrentSession();
   updateNavBarSession(session);

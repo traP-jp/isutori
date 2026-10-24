@@ -135,7 +135,7 @@ async function open(runId?: string, receiver = "http://localhost:7878", copiedSt
     { values: structuredClone(values), copiedState },
   );
   await page.goto(
-    `http://portal.example/contestant${runId ? "#" + new URLSearchParams({ autobench_v2: runId, receiver, target: "2" }) : ""}`,
+    `http://portal.example/contestant${runId ? `#${new URLSearchParams({ autobench_v2: runId, receiver, target: "2" })}` : ""}`,
   );
   await page.evaluate(source);
   if (runId)
@@ -149,10 +149,15 @@ async function menu(page: Page, name: string) {
 }
 async function finish(page: Page, passed = true) {
   await page.evaluate((passed) => {
-    document.getElementById("status")!.textContent = "FINISHED";
-    document.getElementById("finished")!.textContent = "Finished";
-    document.getElementById("verdict")!.textContent = passed ? "Passed" : "Failed";
-    document.getElementById("score")!.textContent = passed ? "42" : "0";
+    const set = (id: string, text: string) => {
+      const element = document.getElementById(id);
+      if (!element) throw new Error(`missing #${id}`);
+      element.textContent = text;
+    };
+    set("status", "FINISHED");
+    set("finished", "Finished");
+    set("verdict", passed ? "Passed" : "Failed");
+    set("score", passed ? "42" : "0");
   }, passed);
   await page.waitForFunction(() =>
     ["done", "unreported"].includes(JSON.parse(sessionStorage.getItem("isutori-autobench-v2") ?? "null")?.phase),
@@ -214,7 +219,9 @@ try {
   );
   const error = await open("error");
   await error.evaluate(() => {
-    document.getElementById("status")!.textContent = "UNKNOWN";
+    const status = document.getElementById("status");
+    if (!status) throw new Error("missing #status");
+    status.textContent = "UNKNOWN";
   });
   await error.waitForFunction(
     () => JSON.parse(sessionStorage.getItem("isutori-autobench-v2") ?? "null")?.phase === "done",

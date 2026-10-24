@@ -1,10 +1,10 @@
-import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve, join } from "node:path";
 import { createServer } from "node:http";
-import { chromium, type Browser, type Dialog, type Page } from "playwright";
+import { join, resolve } from "node:path";
+import { type Browser, chromium, type Dialog, type Page } from "playwright";
 
 declare global {
   interface Window {
@@ -53,12 +53,12 @@ const receiver = createServer((req, res) => {
   req.on("end", () => {
     if (req.url === "/api/userscript") {
       const request: { source: string } = JSON.parse(body);
-      const actual = "sha256:" + createHash("sha256").update(request.source.replace(/\r\n?/g, "\n")).digest("hex");
+      const actual = `sha256:${createHash("sha256").update(request.source.replace(/\r\n?/g, "\n")).digest("hex")}`;
       const source = userscript.slice(
         userscript.indexOf("function isutoriScript() {"),
         userscript.lastIndexOf("})();") + 1,
       );
-      const expected = "sha256:" + createHash("sha256").update(source.replace(/\r\n?/g, "\n")).digest("hex");
+      const expected = `sha256:${createHash("sha256").update(source.replace(/\r\n?/g, "\n")).digest("hex")}`;
       res
         .writeHead(200, { "Content-Type": "application/json" })
         .end(JSON.stringify({ expected, actual, status: actual === expected ? "matched" : "mismatched" }));
@@ -482,5 +482,5 @@ try {
 } finally {
   await browser?.close();
   receiver.close();
-  portals.forEach((p) => p.kill());
+  for (const p of portals) p.kill();
 }
