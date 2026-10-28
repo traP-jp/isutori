@@ -188,8 +188,8 @@ publish = 'test "$ISUTORI_APP_COMMIT" = app && test "$ISUTORI_OPS_COMMIT" = ops 
 		t.Fatal(err)
 	}
 	saved := Summary{
-		RunID: "saved-run", RunDir: dir, OpsCommit: "ops", Error: "collect: interrupted",
-		Entry:  queue.Entry{AppCommit: "app", Mode: ModeFinal, Requester: "tester"},
+		RunDir: dir, OpsCommit: "ops", Error: "collect: interrupted",
+		Entry:  queue.Entry{RunID: "saved-run", AppCommit: "app", Mode: ModeFinal, Requester: "tester"},
 		Stages: []Stage{{Name: "bench", Status: "running"}},
 	}
 	if err := writeJSON(filepath.Join(dir, "run.json"), saved); err != nil {
@@ -316,7 +316,7 @@ func TestExecuteKeepsBenchmarkAndCleansUp(t *testing.T) {
 				cfg:    &config.Config{Queue: config.Queue{LeaseTTL: 10 * time.Second}, Hooks: hooks},
 				q:      &queue.Queue{Shell: queue.Local{}, Dir: filepath.Join(dir, "queue"), TTL: 10 * time.Second},
 				opsDir: dir, out: io.Discard, log: log.New(io.Discard, "", 0),
-				summary: &Summary{RunID: "run1", RunDir: dir, Entry: queue.Entry{RunID: "run1", AppCommit: "app1"}},
+				summary: &Summary{RunDir: dir, Entry: queue.Entry{RunID: "run1", AppCommit: "app1"}},
 			}
 			r.env = environment(r.summary, dir, "unused", "unused")
 			err := r.execute(context.Background(), context.Background())
@@ -363,7 +363,7 @@ func TestExecuteKeepsBenchmarkAndCleansUp(t *testing.T) {
 			if err := json.Unmarshal(b, &shared); err != nil {
 				t.Fatal(err)
 			}
-			if shared.Bench == nil || !shared.Bench.Passed || shared.Bench.Score != 435581 || shared.Entry.AppCommit != "app1" {
+			if shared.Bench == nil || !shared.Bench.Passed || shared.Bench.Score != 435581 || shared.AppCommit != "app1" {
 				t.Fatalf("lost benchmark identity or result: %+v", shared)
 			}
 			last := r.summary.Stages[len(r.summary.Stages)-2]

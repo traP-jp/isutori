@@ -57,9 +57,8 @@ type Stage struct {
 }
 
 type Summary struct {
-	RunID     string       `json:"run_id"`
+	queue.Entry
 	RunDir    string       `json:"run_dir"`
-	Entry     queue.Entry  `json:"entry"`
 	OpsCommit string       `json:"ops_commit"`
 	Bench     *BenchResult `json:"bench,omitempty"`
 	Stages    []Stage      `json:"stages"`
@@ -119,7 +118,6 @@ func Run(ctx context.Context, opts Options) (summary *Summary, err error) {
 		return nil, fmt.Errorf("%s is not on %s; commit it and push it there first", config.FileName, refs.Ops)
 	}
 	r, err := loadRun(root, &Summary{
-		RunID:  runID,
 		RunDir: runDir,
 		Entry: queue.Entry{
 			RunID:      runID,
