@@ -16,26 +16,24 @@ import (
 	"github.com/traP-jp/isutori/internal/config"
 )
 
-var ErrTicketLost = errors.New("ticket no longer exists in the queue (expired or cleared)")
+var ErrEntryLost = errors.New("queue entry no longer exists (expired or cleared)")
 
-type Ticket struct {
-	ID         string    `json:"id"`
-	Requester  string    `json:"requester"`
-	Ref        string    `json:"ref"`
-	AppCommit  string    `json:"app_commit"`
-	Mode       string    `json:"mode"`
-	EnqueuedAt time.Time `json:"enqueued_at"`
-}
-
+// Entry is one queued run, identified by its run ID. Name and LeaseAge are
+// set by List and are not stored in the entry's file.
 type Entry struct {
-	Name     string        `json:"name"`
-	LeaseAge time.Duration `json:"lease_age"`
-	Ticket   Ticket        `json:"ticket"`
+	Name       string        `json:"-"`
+	LeaseAge   time.Duration `json:"-"`
+	RunID      string        `json:"run_id"`
+	Requester  string        `json:"requester"`
+	Ref        string        `json:"ref"`
+	AppCommit  string        `json:"app_commit"`
+	Mode       string        `json:"mode"`
+	EnqueuedAt time.Time     `json:"enqueued_at"`
 }
 
-// Queue keeps one file per ticket under Dir/queue on the queue host.
+// Queue keeps one file per entry under Dir/queue on the queue host.
 // File names start with a counter kept on the host, so lexical order is
-// arrival order even if a clock steps back. A ticket's mtime is its lease;
+// arrival order even if a clock steps back. An entry's mtime is its lease;
 // clients touch it periodically.
 type Queue struct {
 	Shell Shell
@@ -51,14 +49,14 @@ func (q *Queue) prelude() string {
 	return fmt.Sprintf("set -e\nD=%s\nQ=\"$D/queue\"\nmkdir -p \"$Q\"\nexec 9>\"$D/lock\"\nflock 9\n", Quote(q.Dir))
 }
 
-func (q *Queue) Enqueue(ctx context.Context, t Ticket) (string, error) {
-	body, err := json.Marshal(t)
+func (q *Queue) Enqueue(ctx context.Context, e Entry) (string, error) {
+	body, err := json.Marshal(e)
 	if err != nil {
 		return "", err
 	}
-	suffix := unsafeName.ReplaceAllString(t.Requester, "_") + "-" + t.ID + ".json"
+	suffix := unsafeName.ReplaceAllString(e.Requester, "_") + "-" + e.RunID + ".json"
 	// One past the larger of the counter and the clock never goes back, and
-	// keeps pace with tickets that earlier versions named by the clock.
+	// keeps pace with entries that earlier versions named by the clock.
 	script := q.prelude() + fmt.Sprintf(`s=$(cat "$D/seq" 2>/dev/null) || true
 now=$(date +%%s%%N)
 if [ "$now" -gt "${s:-0}" ]; then s=$now; fi
@@ -81,7 +79,7 @@ func (q *Queue) Renew(ctx context.Context, name string) error {
 	script := q.prelude() + fmt.Sprintf("f=\"$Q/\"%s\ntouch -c \"$f\"\n[ -e \"$f\" ] || exit %d\n", Quote(name), exitLost)
 	_, err := q.Shell.Run(ctx, script, nil)
 	if exitErr := (*exec.ExitError)(nil); errors.As(err, &exitErr) && exitErr.ExitCode() == exitLost {
-		return ErrTicketLost
+		return ErrEntryLost
 	}
 	if err != nil {
 		return fmt.Errorf("renew %s: %w", name, err)
@@ -103,7 +101,7 @@ func (q *Queue) Clear(ctx context.Context) error {
 	return nil
 }
 
-// List returns the tickets in arrival order. With prune, tickets whose lease
+// List returns the entries in arrival order. With prune, entries whose lease
 // has expired are deleted instead of returned.
 func (q *Queue) List(ctx context.Context, prune bool) ([]Entry, error) {
 	ttl := -1
@@ -133,8 +131,8 @@ done
 			return nil, fmt.Errorf("list: malformed line %q", line)
 		}
 		e := Entry{Name: name, LeaseAge: time.Duration(age) * time.Second}
-		if err := json.Unmarshal([]byte(body), &e.Ticket); err != nil {
-			return nil, fmt.Errorf("list: ticket %s: %w", name, err)
+		if err := json.Unmarshal([]byte(body), &e); err != nil {
+			return nil, fmt.Errorf("list: entry %s: %w", name, err)
 		}
 		entries = append(entries, e)
 	}
