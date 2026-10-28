@@ -69,8 +69,8 @@ func TestPrepareRefsSnapshot(t *testing.T) {
 	if refs.Name != "main" {
 		t.Fatalf("ref=%q, want main", refs.Name)
 	}
-	if refs.App != first || refs.Ops != latest {
-		t.Fatalf("app=%s ops=%s", refs.App, refs.Ops)
+	if refs.App != first {
+		t.Fatalf("app=%s", refs.App)
 	}
 	for ref, want := range map[string]string{
 		"local-tag": first, "local-branch": first, "origin/local-branch": first,
@@ -101,7 +101,7 @@ func TestPrepareRefsSnapshot(t *testing.T) {
 }
 
 func TestPrepareRefsParallelWorktrees(t *testing.T) {
-	_, work, first, latest := refFixture(t)
+	_, work, first, _ := refFixture(t)
 	other := filepath.Join(filepath.Dir(work), "other")
 	runGit(t, work, "worktree", "add", "--detach", other, "HEAD")
 	logger := log.New(io.Discard, "", 0)
@@ -113,8 +113,8 @@ func TestPrepareRefsParallelWorktrees(t *testing.T) {
 			id := []string{"one", "two"}[i]
 			defer cleanupRefs(root, id, logger)
 			refs, err := prepareRefs(context.Background(), root, id, "HEAD", logger)
-			if err != nil || refs.App != first || refs.Ops != latest {
-				t.Errorf("%s: %s %s %v", id, refs.App, refs.Ops, err)
+			if err != nil || refs.App != first {
+				t.Errorf("%s: %s %v", id, refs.App, err)
 			}
 		}()
 	}

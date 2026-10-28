@@ -376,7 +376,7 @@ func initRepo(ctx context.Context) error {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "wrote %s\n", path)
-	fmt.Fprintln(os.Stderr, "next: fill in [hooks], commit it with the hook scripts, and push to the branch of ops.ref (main by default); isutori reads them from origin")
+	fmt.Fprintln(os.Stderr, "next: fill in [hooks], commit it with the hook scripts, and push; isutori reads isutori.toml and the hooks from the commit it deploys (HEAD by default)")
 
 	ignore := filepath.Join(root, ".gitignore")
 	b, err := os.ReadFile(ignore)

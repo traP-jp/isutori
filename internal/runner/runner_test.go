@@ -182,13 +182,13 @@ bench = "exit 99"
 collect = "exit 99"
 analyze = "exit 99"
 cleanup = "exit 99"
-publish = 'test "$ISUTORI_APP_COMMIT" = app && test "$ISUTORI_OPS_COMMIT" = ops && test "$ISUTORI_MODE" = final && test "$ISUTORI_REQUESTER" = tester && test -z "$ISUTORI_TICKET_ID" && mkdir -p "$ISUTORI_REPO/shared/$ISUTORI_RUN_ID" && cp "$ISUTORI_RUN_DIR/run.json" "$ISUTORI_REPO/shared/$ISUTORI_RUN_ID/run.json" && test -f "$ISUTORI_RUN_DIR/allow-publish"'
+publish = 'test "$ISUTORI_APP_COMMIT" = app && test "$ISUTORI_MODE" = final && test "$ISUTORI_REQUESTER" = tester && test -z "$ISUTORI_TICKET_ID" && mkdir -p "$ISUTORI_REPO/shared/$ISUTORI_RUN_ID" && cp "$ISUTORI_RUN_DIR/run.json" "$ISUTORI_REPO/shared/$ISUTORI_RUN_ID/run.json" && test -f "$ISUTORI_RUN_DIR/allow-publish"'
 `
 	if err := os.WriteFile(filepath.Join(ops, config.FileName), []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	saved := Summary{
-		RunID: "saved-run", RunDir: dir, OpsCommit: "ops", Error: "collect: interrupted",
+		RunID: "saved-run", RunDir: dir, Error: "collect: interrupted",
 		Ticket: queue.Ticket{AppCommit: "app", Mode: ModeFinal, Requester: "tester"},
 		Stages: []Stage{{Name: "bench", Status: "running"}},
 	}

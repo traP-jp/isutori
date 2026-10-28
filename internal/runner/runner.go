@@ -57,13 +57,12 @@ type Stage struct {
 }
 
 type Summary struct {
-	RunID     string       `json:"run_id"`
-	RunDir    string       `json:"run_dir"`
-	Ticket    queue.Ticket `json:"ticket"`
-	OpsCommit string       `json:"ops_commit"`
-	Bench     *BenchResult `json:"bench,omitempty"`
-	Stages    []Stage      `json:"stages"`
-	Error     string       `json:"error,omitempty"`
+	RunID  string       `json:"run_id"`
+	RunDir string       `json:"run_dir"`
+	Ticket queue.Ticket `json:"ticket"`
+	Bench  *BenchResult `json:"bench,omitempty"`
+	Stages []Stage      `json:"stages"`
+	Error  string       `json:"error,omitempty"`
 }
 
 type run struct {
@@ -113,11 +112,11 @@ func Run(ctx context.Context, opts Options) (summary *Summary, err error) {
 		return nil, err
 	}
 	defer lock.Close()
-	if err := extract(ctx, root, refs.Ops, opsDir); err != nil {
+	if err := extract(ctx, root, refs.App, opsDir); err != nil {
 		return nil, err
 	}
 	if _, err := os.Stat(filepath.Join(opsDir, config.FileName)); errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("%s is not on %s; commit it and push it there first", config.FileName, refs.Ops)
+		return nil, fmt.Errorf("%s is not on %s; commit it on the branch you measure and push it there first", config.FileName, refs.App)
 	}
 	r, err := loadRun(root, &Summary{
 		RunID:  runID,
@@ -130,7 +129,6 @@ func Run(ctx context.Context, opts Options) (summary *Summary, err error) {
 			Mode:       opts.Mode,
 			EnqueuedAt: time.Now(),
 		},
-		OpsCommit: refs.Ops,
 	}, ticketID, out)
 	if err != nil {
 		return nil, err
@@ -407,7 +405,6 @@ func (r *run) recordDeployed(state string) func(context.Context) error {
 			"by":          t.Requester,
 			"ref":         t.Ref,
 			"app_commit":  t.AppCommit,
-			"ops_commit":  r.summary.OpsCommit,
 			"mode":        t.Mode,
 			"deployed_at": time.Now(),
 		})
@@ -523,7 +520,7 @@ func loadRun(root string, summary *Summary, ticketID string, out io.Writer) (*ru
 	cfgPath := filepath.Join(opsDir, config.FileName)
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		return nil, fmt.Errorf("%s at ops ref %s: %w", config.FileName, summary.OpsCommit, err)
+		return nil, fmt.Errorf("%s at commit %s: %w", config.FileName, summary.Ticket.AppCommit, err)
 	}
 	binDir, err := linkSelf(summary.RunDir)
 	if err != nil {
@@ -549,7 +546,6 @@ func environment(s *Summary, ticketID, root, cfgPath, binDir string) []string {
 		"ISUTORI_REPO="+root,
 		"ISUTORI_CONFIG="+cfgPath,
 		"ISUTORI_APP_COMMIT="+s.Ticket.AppCommit,
-		"ISUTORI_OPS_COMMIT="+s.OpsCommit,
 		"ISUTORI_MODE="+s.Ticket.Mode,
 		"ISUTORI_REQUESTER="+s.Ticket.Requester,
 		"ISUTORI_TICKET_ID="+ticketID,

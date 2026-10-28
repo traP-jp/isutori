@@ -22,7 +22,7 @@ isutori init                # isutori.toml の雛形を書き、.gitignore に .
 
 ## フックを書いて push する
 
-次に、`isutori.toml` の `[hooks]` を埋めます。埋めたら、フックのスクリプトと一緒に commit し、`ops.ref` のブランチ (既定は main) へ push します。isutori はフックと `isutori.toml` を origin から取り出して使うので、push する前の内容は使われません。
+次に、`isutori.toml` の `[hooks]` を埋めます。埋めたら、フックのスクリプトと一緒に commit し、測るブランチへ push します。isutori はフックと `isutori.toml` を、アプリと同じコミットから取り出して使うので、push する前の内容は使われません。
 
 フックの書き方は [フックの書き方](hooks.md) に、`bench` のフックで結果を受け取る方法は [ベンチ結果の受け取り](bench-hook.md) にあります。
 

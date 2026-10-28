@@ -4,7 +4,7 @@
 
 `isutori bench` を 1 回実行するごとに、キューに 1 枚のチケットを並べます。先頭のチケットを持つ実行だけが、共有サーバーを操作できます。
 
-1. REF が origin にあるか確かめ、`ops.ref` (既定 `origin/main`) を取り出す。`isutori.toml` とフックは、取り出したものを使う
+1. REF が origin にあるか確かめ、コミットを確定する。アプリ、`isutori.toml`、フックは、すべてこのコミットから取り出したものを使う
 2. チケットをキューに並べ、先頭になるまで待つ
 3. `deploy` → `health` → `prepare` → `bench` → `collect` → `analyze` → `publish` の順に進む
 4. `cleanup` を呼ぶ。`deploy` に進んだ実行では、途中で失敗したときや Ctrl-C で中断したときにも呼ぶ
