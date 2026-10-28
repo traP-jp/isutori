@@ -2,7 +2,9 @@
 
 フックは `isutori.toml` の `[hooks]` に書きます。`deploy` と `bench` は必須で、ほかのフックは未設定なら飛ばします。
 
-isutori は、`ops.ref` から取り出したディレクトリを作業ディレクトリにして、フックを `sh -c` で実行します。フックの中では `isutori guard` をそのまま呼べます。
+isutori は、計測するコミットから取り出したディレクトリを作業ディレクトリにして、フックを `sh -c` で実行します。フックの中では `isutori guard` をそのまま呼べます。
+
+デプロイ手順は、アプリと同じリポジトリに置き、何度実行しても同じ状態になるように書くことを勧めます。手順はアプリと同じコミットから取り出されるため、手順を変えるときは、測るアプリと同じコミットに含めます。
 
 フックが 0 以外で終了するか、上限の時間を超えると、残りを飛ばして `cleanup` へ進みます。ただし、`collect` や `analyze` が失敗した場合は、取得済みのベンチ結果を共有できるよう `publish` を試してから進みます。中断やリース切れの場合は `publish` を試しません。上限は `hooks.timeout` (既定 10 分) です。`bench` だけは、ポータルの順番待ちを含むため `hooks.bench_timeout` (既定 20 分) で別に決めます。
 
@@ -15,8 +17,7 @@ isutori は、`ops.ref` から取り出したディレクトリを作業ディ�
 | 変数 | 内容 |
 |---|---|
 | `ISUTORI_RUN_ID` / `ISUTORI_RUN_DIR` | この実行の ID と作業ディレクトリ |
-| `ISUTORI_APP_COMMIT` | デプロイするアプリのコミット |
-| `ISUTORI_OPS_COMMIT` | フックを取り出したコミット |
+| `ISUTORI_APP_COMMIT` | デプロイするアプリと、フックや `isutori.toml` を取り出したコミット |
 | `ISUTORI_MODE` | `measure` か `final` |
 | `ISUTORI_REQUESTER` | 実行した人 |
 | `ISUTORI_REPO` | 手元の競技リポジトリのルート |

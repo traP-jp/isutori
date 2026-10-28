@@ -5,18 +5,14 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/traP-jp/isutori/internal/config"
 )
 
-// fixedRefs are the commits a run deploys and takes its hooks from, fixed
-// before it joins the queue.
+// fixedRefs is the commit a run deploys and takes its configuration and
+// hooks from, fixed before it joins the queue.
 type fixedRefs struct {
 	App string
-	Ops string
 	// Name is the requested ref, abbreviated where git can.
 	Name string
 }
@@ -24,10 +20,6 @@ type fixedRefs struct {
 // prepareRefs fetches origin into a namespace of this run alone, so that
 // concurrent runs and the user's own fetches never contend for the same refs.
 func prepareRefs(ctx context.Context, root, runID, ref string, logger *log.Logger) (fixedRefs, error) {
-	local, err := config.Load(filepath.Join(root, config.FileName))
-	if err != nil {
-		return fixedRefs{}, err
-	}
 	namespace := "refs/isutori/" + runID + "/"
 	logger.Print("fetching origin into " + namespace)
 	// Explicit destinations alone still allow configured remote-tracking updates.
@@ -37,6 +29,7 @@ func prepareRefs(ctx context.Context, root, runID, ref string, logger *log.Logge
 		return fixedRefs{}, err
 	}
 	refs := fixedRefs{Name: ref}
+	var err error
 	if refs.App, err = resolveRef(ctx, root, namespace, ref); err != nil {
 		return fixedRefs{}, err
 	}
@@ -47,13 +40,10 @@ func prepareRefs(ctx context.Context, root, runID, ref string, logger *log.Logge
 	if heads == "" {
 		return fixedRefs{}, fmt.Errorf("%s (%s) is not on origin; push it first so the servers can fetch it", ref, refs.App)
 	}
-	if refs.Ops, err = resolveRef(ctx, root, namespace, local.Ops.Ref); err != nil {
-		return fixedRefs{}, err
-	}
 	if name, err := git(ctx, root, "rev-parse", "--abbrev-ref", "--verify", "--end-of-options", ref); err == nil && name != "" {
 		refs.Name = name
 	}
-	logger.Printf("fixed app=%s ops=%s", refs.App, refs.Ops)
+	logger.Printf("fixed app=%s", refs.App)
 	return refs, nil
 }
 

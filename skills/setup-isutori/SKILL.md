@@ -12,7 +12,7 @@ isutori が担当するのは、順番待ちのキューの管理と、順番が
 
 次の操作は、実行する前に依頼者の承認を得る。
 
-- `git push` (フックと `isutori.toml` は origin の `ops.ref` から読まれるため、反映には push が要る)
+- `git push` (フックと `isutori.toml` は、測るコミットの内容が origin から読まれるため、反映には push が要る)
 - `isutori bench` (共有サーバーにデプロイし直し、その数分間、チームの他の人はデプロイとベンチができなくなる)
 
 ## isutori を入れる
@@ -38,7 +38,7 @@ mise が使えない場合は、`go run github.com/traP-jp/isutori@<コミット
 
 `isutori init` で雛形を作り、次の点に気をつけて埋める。
 
-- フックは、依頼者の作業ツリーではなく `ops.ref` から取り出したディレクトリで実行される。そのため、デプロイするアプリは作業ツリーから取らず、`$ISUTORI_APP_COMMIT` のコミットをサーバーへ載せる
+- フックは、依頼者の作業ツリーではなく、計測するコミットから取り出したディレクトリで実行される。そのため、デプロイするアプリは作業ツリーから取らず、`$ISUTORI_APP_COMMIT` のコミットをサーバーへ載せる
 - デプロイ手段そのものの冒頭に `isutori guard` を入れる (playbook の最初のタスク、Makefile のターゲットの 1 行目など)。`hooks.deploy` にだけ書くと、isutori を通さない直接のデプロイを止められない
 - `$ISUTORI_MODE` をデプロイ手段に渡し、`final` のときはログ出力やプロファイラを切らせる
 - `collect` / `analyze` の成果物は `$ISUTORI_RUN_DIR` の下に置く。publish は、そこにある結果や成果物を共有先へ送る。`isutori docs publish` の「publish フックの約束事」に従い、成果物の不足、同じ実行 ID の再送、共有処理の競合を扱う
@@ -107,7 +107,7 @@ WSL から使う場合は、Windows のブラウザから `http://127.0.0.1:7878
 
 ## 反映する
 
-`isutori.toml`、フック、`ops/isutori.user.js`、`AGENTS.md`、`CLAUDE.md` の変更をコミットする。依頼者の承認を得てから、`ops.ref` のブランチ (既定は main) へ push する。
+`isutori.toml`、フック、`ops/isutori.user.js`、`AGENTS.md`、`CLAUDE.md` の変更をコミットする。依頼者の承認を得てから、測るブランチへ push する。
 
 ## 確かめる
 

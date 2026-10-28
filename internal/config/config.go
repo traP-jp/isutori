@@ -14,7 +14,6 @@ const FileName = "isutori.toml"
 
 type Config struct {
 	Queue Queue `toml:"queue"`
-	Ops   Ops   `toml:"ops"`
 	Hooks Hooks `toml:"hooks"`
 }
 
@@ -23,10 +22,6 @@ type Queue struct {
 	Dir        string        `toml:"dir"`
 	LeaseTTL   time.Duration `toml:"lease_ttl"`
 	SSHCommand string        `toml:"ssh_command"`
-}
-
-type Ops struct {
-	Ref string `toml:"ref"`
 }
 
 type Hooks struct {
@@ -45,7 +40,6 @@ type Hooks struct {
 func Load(path string) (*Config, error) {
 	c := &Config{
 		Queue: Queue{Dir: ".isutori", LeaseTTL: 120 * time.Second, SSHCommand: "ssh"},
-		Ops:   Ops{Ref: "origin/main"},
 		Hooks: Hooks{Timeout: 10 * time.Minute, BenchTimeout: 20 * time.Minute},
 	}
 	md, err := toml.DecodeFile(path, c)
@@ -99,9 +93,7 @@ host = "s1"           # SSH の接続先。キューの状態はこのホスト�
 # lease_ttl = "120s"
 # ssh_command = "ssh"
 
-[ops]
-ref = "origin/main"   # フックと isutori.toml はこの ref から取り出して使う
-
+# フックとこのファイルは、計測するコミット (--ref、既定は HEAD) から取り出して使う
 # フックは sh -c で実行する。失敗したら残りを飛ばして cleanup へ進む
 # collect/analyze の失敗時は、取得済みの結果を共有するために publish を試す
 [hooks]
