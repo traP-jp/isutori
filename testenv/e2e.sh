@@ -163,5 +163,13 @@ wait $gina || true
 pgrep -fx 'sleep 60' > /dev/null && { echo "cleanup survived the second Ctrl-C"; pkill -fx 'sleep 60'; fail=1; }
 [ "$(isutori status --json | grep -c '"queue": \[\]')" = 1 ] || { echo "entry left in queue after a second Ctrl-C"; fail=1; }
 
+# Hooks come from the measured commit, not from the checked-out one.
+git checkout -qb topic
+sed -i 's/"score":123/"score":456/' ops/bench.sh
+git commit -qam topic && git push -q origin topic 2>/dev/null
+git checkout -q main
+isutori bench --ref origin/topic --requester hal > "$work/hal.json" 2> "$work/hal.log" || { echo "hal's bench failed"; fail=1; }
+grep -q '"score": 456' "$work/hal.json" || { echo "hooks were not taken from --ref"; fail=1; }
+
 if [ "$fail" = 0 ]; then echo "e2e: OK"; else echo "e2e: FAILED (logs in $work)"; fi
 exit $fail
