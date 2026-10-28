@@ -59,7 +59,7 @@ type Stage struct {
 type Summary struct {
 	RunID     string       `json:"run_id"`
 	RunDir    string       `json:"run_dir"`
-	Ticket    queue.Ticket `json:"ticket"`
+	Entry     queue.Entry  `json:"entry"`
 	OpsCommit string       `json:"ops_commit"`
 	Bench     *BenchResult `json:"bench,omitempty"`
 	Stages    []Stage      `json:"stages"`
@@ -79,8 +79,7 @@ type run struct {
 // Run deploys opts.Ref and benchmarks it at the head of the queue.
 func Run(ctx context.Context, opts Options) (summary *Summary, err error) {
 	root := opts.RepoRoot
-	ticketID := rand.Text()[:8]
-	runID := time.Now().Format("20060102T150405") + "-" + ticketID
+	runID := time.Now().Format("20060102T150405") + "-" + rand.Text()[:8]
 	runDir := runDirOf(root, runID)
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		return nil, err
@@ -122,8 +121,8 @@ func Run(ctx context.Context, opts Options) (summary *Summary, err error) {
 	r, err := loadRun(root, &Summary{
 		RunID:  runID,
 		RunDir: runDir,
-		Ticket: queue.Ticket{
-			ID:         ticketID,
+		Entry: queue.Entry{
+			RunID:      runID,
 			Requester:  opts.Requester,
 			Ref:        refs.Name,
 			AppCommit:  refs.App,
@@ -131,7 +130,7 @@ func Run(ctx context.Context, opts Options) (summary *Summary, err error) {
 			EnqueuedAt: time.Now(),
 		},
 		OpsCommit: refs.Ops,
-	}, ticketID, out)
+	}, out)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +147,7 @@ func Run(ctx context.Context, opts Options) (summary *Summary, err error) {
 var errAborted = errors.New("aborted by a second interrupt")
 
 func (r *run) execute(parent, abort context.Context) error {
-	name, err := r.q.Enqueue(parent, r.summary.Ticket)
+	name, err := r.q.Enqueue(parent, r.summary.Entry)
 	if err != nil {
 		return err
 	}
@@ -157,7 +156,7 @@ func (r *run) execute(parent, abort context.Context) error {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), r.cfg.Queue.LeaseTTL/4)
 		defer cancel()
 		if err := r.q.Remove(ctx, name); err != nil {
-			r.log.Printf("WARNING: failed to remove ticket %s; run `isutori queue clear` if it blocks others: %v", name, err)
+			r.log.Printf("WARNING: failed to remove queue entry %s; run `isutori queue clear` if it blocks others: %v", name, err)
 		}
 	}()
 
@@ -203,18 +202,18 @@ func (r *run) execute(parent, abort context.Context) error {
 		runErr = r.finish(ctx)
 	}
 
-	// A stage may have failed because the ticket is gone, e.g. guard in deploy;
-	// find out now rather than at the next renewal.
+	// A stage may have failed because the queue entry is gone, e.g. guard in
+	// deploy; find out now rather than at the next renewal.
 	renewCtx, cancelRenew := context.WithTimeout(leaseCtx, r.cfg.Queue.LeaseTTL/4)
-	if err := r.q.Renew(renewCtx, name); errors.Is(err, queue.ErrTicketLost) {
+	if err := r.q.Renew(renewCtx, name); errors.Is(err, queue.ErrEntryLost) {
 		loseLease(err)
 	}
 	cancelRenew()
 	switch cause := context.Cause(leaseCtx); {
 	case errors.Is(cause, errAborted):
 		return errors.Join(runErr, cause)
-	case errors.Is(cause, queue.ErrTicketLost), errors.Is(cause, errLeaseUnconfirmed):
-		r.log.Print("WARNING: skipping cleanup because the servers may already belong to the next ticket")
+	case errors.Is(cause, queue.ErrEntryLost), errors.Is(cause, errLeaseUnconfirmed):
+		r.log.Print("WARNING: skipping cleanup because the servers may already belong to the next run")
 		return errors.Join(runErr, cause)
 	}
 	return errors.Join(runErr, r.stage(leaseCtx, stageCleanup, r.hook(h.Cleanup)))
@@ -240,11 +239,11 @@ func (r *run) finish(ctx context.Context) error {
 	return errors.Join(runErr, r.stage(ctx, "publish", r.hook(r.cfg.Hooks.Publish)))
 }
 
-var errLeaseUnconfirmed = errors.New("lease renewals kept failing; the queue host may have handed the servers to the next ticket")
+var errLeaseUnconfirmed = errors.New("lease renewals kept failing; the queue host may have handed the servers to the next run")
 
 func (r *run) keepLease(ctx context.Context, cancel context.CancelCauseFunc, name string) {
 	ttl := r.cfg.Queue.LeaseTTL
-	// Stop a quarter before the host may prune the ticket, on a timer of its
+	// Stop a quarter before the host may prune the entry, on a timer of its
 	// own so that a renewal that never returns cannot delay it.
 	giveUp := ttl * 3 / 4
 	deadline := time.AfterFunc(giveUp, func() {
@@ -268,7 +267,7 @@ func (r *run) keepLease(ctx context.Context, cancel context.CancelCauseFunc, nam
 			return
 		}
 		switch {
-		case errors.Is(err, queue.ErrTicketLost):
+		case errors.Is(err, queue.ErrEntryLost):
 			r.log.Printf("ERROR: %v", err)
 			cancel(err)
 			return
@@ -295,14 +294,14 @@ func (r *run) waitHead(ctx context.Context, name string) error {
 		}
 		switch pos {
 		case -1:
-			return queue.ErrTicketLost
+			return queue.ErrEntryLost
 		case 0:
 			r.log.Print("reached the head of the queue")
 			return nil
 		}
-		if head := entries[0].Ticket; head.ID != last {
+		if head := entries[0]; head.RunID != last {
 			r.log.Printf("waiting: %d ahead, now running %s by %s", pos, head.Ref, head.Requester)
-			last = head.ID
+			last = head.RunID
 		}
 		select {
 		case <-ctx.Done():
@@ -399,16 +398,15 @@ func (r *run) deploy(ctx context.Context) error {
 
 func (r *run) recordDeployed(state string) func(context.Context) error {
 	return func(ctx context.Context) error {
-		t := r.summary.Ticket
+		e := r.summary.Entry
 		body, err := json.Marshal(map[string]any{
 			"state":       state,
 			"run_id":      r.summary.RunID,
-			"ticket":      t.ID,
-			"by":          t.Requester,
-			"ref":         t.Ref,
-			"app_commit":  t.AppCommit,
+			"by":          e.Requester,
+			"ref":         e.Ref,
+			"app_commit":  e.AppCommit,
 			"ops_commit":  r.summary.OpsCommit,
-			"mode":        t.Mode,
+			"mode":        e.Mode,
 			"deployed_at": time.Now(),
 		})
 		if err != nil {
@@ -518,7 +516,7 @@ func repoRootOf(runDir string) (string, error) {
 }
 
 // loadRun wires a run to the configuration and hooks saved in its directory.
-func loadRun(root string, summary *Summary, ticketID string, out io.Writer) (*run, error) {
+func loadRun(root string, summary *Summary, out io.Writer) (*run, error) {
 	opsDir := filepath.Join(summary.RunDir, "ops")
 	cfgPath := filepath.Join(opsDir, config.FileName)
 	cfg, err := config.Load(cfgPath)
@@ -533,14 +531,14 @@ func loadRun(root string, summary *Summary, ticketID string, out io.Writer) (*ru
 		cfg:     cfg,
 		q:       queue.New(cfg.Queue),
 		opsDir:  opsDir,
-		env:     environment(summary, ticketID, root, cfgPath, binDir),
+		env:     environment(summary, root, cfgPath, binDir),
 		log:     log.New(out, "isutori: ", log.Ltime),
 		out:     out,
 		summary: summary,
 	}, nil
 }
 
-func environment(s *Summary, ticketID, root, cfgPath, binDir string) []string {
+func environment(s *Summary, root, cfgPath, binDir string) []string {
 	return append(os.Environ(),
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"ISUTORI_RUN_ID="+s.RunID,
@@ -548,15 +546,14 @@ func environment(s *Summary, ticketID, root, cfgPath, binDir string) []string {
 		"ISUTORI_BENCH_RESULT="+filepath.Join(s.RunDir, benchResultFile),
 		"ISUTORI_REPO="+root,
 		"ISUTORI_CONFIG="+cfgPath,
-		"ISUTORI_APP_COMMIT="+s.Ticket.AppCommit,
+		"ISUTORI_APP_COMMIT="+s.Entry.AppCommit,
 		"ISUTORI_OPS_COMMIT="+s.OpsCommit,
-		"ISUTORI_MODE="+s.Ticket.Mode,
-		"ISUTORI_REQUESTER="+s.Ticket.Requester,
-		"ISUTORI_TICKET_ID="+ticketID,
+		"ISUTORI_MODE="+s.Entry.Mode,
+		"ISUTORI_REQUESTER="+s.Entry.Requester,
 	)
 }
 
-// Publish retries only the saved publish hook, without a ticket, so it never
+// Publish retries only the saved publish hook, without queueing, so it never
 // holds the servers.
 func Publish(ctx context.Context, runDir string, out io.Writer) (*Summary, error) {
 	runDir, err := filepath.Abs(runDir)
@@ -601,7 +598,7 @@ func Publish(ctx context.Context, runDir string, out io.Writer) (*Summary, error
 		return nil, err
 	}
 	defer logFile.Close()
-	r, err := loadRun(root, &summary, "", io.MultiWriter(out, logFile))
+	r, err := loadRun(root, &summary, io.MultiWriter(out, logFile))
 	if err != nil {
 		return nil, err
 	}

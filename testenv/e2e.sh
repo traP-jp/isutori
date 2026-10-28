@@ -57,11 +57,11 @@ EOF
 cat > ops/hook.sh <<EOF
 #!/bin/sh
 set -e
-ssh -F $work/ssh_config s1 "echo \$ISUTORI_TICKET_ID \$1 >> markers"
+ssh -F $work/ssh_config s1 "echo \$ISUTORI_RUN_ID \$1 >> markers"
 sleep 1
 if [ "\$1" = cleanup ] && [ -n "\${CLEANUP_SLEEP:-}" ]; then
   sleep "\$CLEANUP_SLEEP"
-  ssh -F $work/ssh_config s1 "echo \$ISUTORI_TICKET_ID cleaned >> markers"
+  ssh -F $work/ssh_config s1 "echo \$ISUTORI_RUN_ID cleaned >> markers"
 fi
 EOF
 cat > ops/bench.sh <<'EOF'
@@ -117,8 +117,8 @@ awk '
   END { if (n != 3) { print "expected 3 runs, got " n; bad = 1 } exit bad }
 ' "$work/markers" || { cat "$work/markers"; fail=1; }
 
-ISUTORI_TICKET_ID=bogus ISUTORI_CONFIG="$work/repo/isutori.toml" isutori guard 2>/dev/null \
-  && { echo "guard passed for a ticket not in the queue"; fail=1; }
+ISUTORI_RUN_ID=bogus ISUTORI_CONFIG="$work/repo/isutori.toml" isutori guard 2>/dev/null \
+  && { echo "guard passed for a run not in the queue"; fail=1; }
 grep -q 'now running main by' "$work/bob.log" "$work/carol.log" "$work/alice.log" || { echo "queue does not show branch names"; fail=1; }
 
 grep -q '"score": 123' "$work/alice.json" || { echo "isutori receive did not pass the result on"; fail=1; }
@@ -144,7 +144,7 @@ awk '
   $2 == "cleaned" { cleaned = NR }
   END { exit !(cleaned && eve && cleaned < eve) }
 ' "$work/markers" || { echo "eve deployed before dave's cleanup ended"; cat "$work/markers"; fail=1; }
-[ "$(isutori status --json | grep -c '"id"')" = 0 ] || { echo "ticket left in queue after SIGINT"; fail=1; }
+[ "$(isutori status --json | grep -c '"queue": \[\]')" = 1 ] || { echo "entry left in queue after SIGINT"; fail=1; }
 
 status=0; BENCH=fail isutori bench --requester frank > "$work/frank.json" 2> "$work/frank.log" || status=$?
 [ "$status" = 2 ] || { echo "failed bench exited with $status, want 2"; fail=1; }
@@ -161,7 +161,7 @@ start=$SECONDS
 wait $gina || true
 [ $((SECONDS - start)) -lt 15 ] || { echo "second Ctrl-C took $((SECONDS - start))s to exit"; fail=1; }
 pgrep -fx 'sleep 60' > /dev/null && { echo "cleanup survived the second Ctrl-C"; pkill -fx 'sleep 60'; fail=1; }
-[ "$(isutori status --json | grep -c '"id"')" = 0 ] || { echo "ticket left in queue after a second Ctrl-C"; fail=1; }
+[ "$(isutori status --json | grep -c '"queue": \[\]')" = 1 ] || { echo "entry left in queue after a second Ctrl-C"; fail=1; }
 
 if [ "$fail" = 0 ]; then echo "e2e: OK"; else echo "e2e: FAILED (logs in $work)"; fi
 exit $fail
