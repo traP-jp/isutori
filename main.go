@@ -192,9 +192,9 @@ func publish(ctx context.Context, args []string) error {
 }
 
 func guard(ctx context.Context) error {
-	ticket := os.Getenv("ISUTORI_TICKET_ID")
+	runID := os.Getenv("ISUTORI_RUN_ID")
 	path := os.Getenv("ISUTORI_CONFIG")
-	if ticket == "" || path == "" {
+	if runID == "" || path == "" {
 		return errors.New("guard: not running inside `isutori bench`; deploy only through the queue")
 	}
 	cfg, err := config.Load(path)
@@ -205,8 +205,8 @@ func guard(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if len(entries) == 0 || entries[0].Ticket.ID != ticket {
-		return fmt.Errorf("guard: ticket %s is not at the head of the queue", ticket)
+	if len(entries) == 0 || entries[0].RunID != runID {
+		return fmt.Errorf("guard: run %s is not at the head of the queue", runID)
 	}
 	return nil
 }
@@ -323,7 +323,7 @@ func status(ctx context.Context, args []string) error {
 	}
 	if *asJSON {
 		type entry struct {
-			queue.Ticket
+			queue.Entry
 			LeaseAgeSeconds float64 `json:"lease_age_seconds"`
 			Expired         bool    `json:"expired"`
 		}
@@ -332,7 +332,7 @@ func status(ctx context.Context, args []string) error {
 			Deployed json.RawMessage `json:"deployed"`
 		}{Queue: []entry{}, Deployed: deployed}
 		for _, e := range entries {
-			out.Queue = append(out.Queue, entry{e.Ticket, e.LeaseAge.Seconds(), e.LeaseAge > cfg.Queue.LeaseTTL})
+			out.Queue = append(out.Queue, entry{e, e.LeaseAge.Seconds(), e.LeaseAge > cfg.Queue.LeaseTTL})
 		}
 		if out.Deployed == nil {
 			out.Deployed = json.RawMessage("null")
@@ -342,9 +342,9 @@ func status(ctx context.Context, args []string) error {
 		return enc.Encode(out)
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "#\tTICKET\tREQUESTER\tREF\tMODE\tWAITING")
+	fmt.Fprintln(w, "#\tRUN ID\tREQUESTER\tREF\tMODE\tWAITING")
 	for i, e := range entries {
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", i, e.Ticket.ID, e.Ticket.Requester, e.Ticket.Ref, e.Ticket.Mode, time.Since(e.Ticket.EnqueuedAt).Round(time.Second))
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", i, e.RunID, e.Requester, e.Ref, e.Mode, time.Since(e.EnqueuedAt).Round(time.Second))
 	}
 	w.Flush()
 	if deployed != nil {

@@ -17,14 +17,14 @@ isutori は、計測するコミットから取り出したディレクトリを
 | `ISUTORI_RUN_ID` / `ISUTORI_RUN_DIR` | この実行の ID と作業ディレクトリ |
 | `ISUTORI_APP_COMMIT` | デプロイするアプリと、フックや `isutori.toml` を取り出したコミット |
 | `ISUTORI_MODE` | `measure` か `final` |
-| `ISUTORI_REQUESTER` / `ISUTORI_TICKET_ID` | 実行した人とチケット |
+| `ISUTORI_REQUESTER` | 実行した人 |
 | `ISUTORI_REPO` | 手元の競技リポジトリのルート |
 | `ISUTORI_CONFIG` | 使っている `isutori.toml` |
 | `ISUTORI_BENCH_RESULT` | `bench` のフックが結果を書くファイル |
 
 `$ISUTORI_RUN_DIR` には次のファイルができます。
 
-- `run.json`: チケット、対象コミット、ベンチ結果、各ステップの状態と所要時間。実行の情報はキュー登録前に保存し、各ステップの開始前と終了後に更新します
+- `run.json`: Run ID、対象コミット、ベンチ結果、各ステップの状態と所要時間。実行の情報はキュー登録前に保存し、各ステップの開始前と終了後に更新します
 - `bench.json`: `bench` のフックが書いたベンチ結果
 - `run.log`: isutori とフックの出力
 

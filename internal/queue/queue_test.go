@@ -22,7 +22,7 @@ func TestQueue(t *testing.T) {
 
 	var names []string
 	for _, id := range []string{"a", "b", "c"} {
-		n, err := q.Enqueue(ctx, Ticket{ID: id, Requester: "risu-risu's"})
+		n, err := q.Enqueue(ctx, Entry{RunID: id, Requester: "risu-risu's"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -33,7 +33,7 @@ func TestQueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 3 || entries[0].Ticket.ID != "a" || entries[2].Ticket.ID != "c" {
+	if len(entries) != 3 || entries[0].RunID != "a" || entries[2].RunID != "c" {
 		t.Fatalf("unexpected order: %+v", entries)
 	}
 
@@ -48,14 +48,14 @@ func TestQueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2 || entries[0].Ticket.ID != "b" {
-		t.Fatalf("expired ticket was not pruned: %+v", entries)
+	if len(entries) != 2 || entries[0].RunID != "b" {
+		t.Fatalf("expired entry was not pruned: %+v", entries)
 	}
-	if err := q.Renew(ctx, names[0]); !errors.Is(err, ErrTicketLost) {
-		t.Fatalf("renewing a pruned ticket: got %v, want ErrTicketLost", err)
+	if err := q.Renew(ctx, names[0]); !errors.Is(err, ErrEntryLost) {
+		t.Fatalf("renewing a pruned entry: got %v, want ErrEntryLost", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".isutori/queue", names[0])); !os.IsNotExist(err) {
-		t.Fatal("renew recreated a pruned ticket")
+		t.Fatal("renew recreated a pruned entry")
 	}
 
 	if err := q.Remove(ctx, names[1]); err != nil {
@@ -104,7 +104,7 @@ func TestOrderSurvivesClockSteppingBack(t *testing.T) {
 	ctx := context.Background()
 	q, _ := newQueue(t)
 	for _, id := range []string{"first", "second", "third"} {
-		if _, err := q.Enqueue(ctx, Ticket{ID: id, Requester: "r"}); err != nil {
+		if _, err := q.Enqueue(ctx, Entry{RunID: id, Requester: "r"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -113,18 +113,18 @@ func TestOrderSurvivesClockSteppingBack(t *testing.T) {
 	}
 }
 
-func TestOrderWithTicketsFromClockNamingVersions(t *testing.T) {
+func TestOrderWithEntriesFromClockNamingVersions(t *testing.T) {
 	ctx := context.Background()
 	q, home := newQueue(t)
-	if _, err := q.Enqueue(ctx, Ticket{ID: "new1", Requester: "r"}); err != nil {
+	if _, err := q.Enqueue(ctx, Entry{RunID: "new1", Requester: "r"}); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(10 * time.Millisecond)
 	old := fmt.Sprintf("%d-r-old.json", time.Now().UnixNano())
-	if err := os.WriteFile(filepath.Join(home, ".isutori/queue", old), []byte(`{"id":"old"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ".isutori/queue", old), []byte(`{"run_id":"old"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := q.Enqueue(ctx, Ticket{ID: "new2", Requester: "r"}); err != nil {
+	if _, err := q.Enqueue(ctx, Entry{RunID: "new2", Requester: "r"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := queuedIDs(t, q); got != "new1,old,new2" {
@@ -139,7 +139,7 @@ func queuedIDs(t *testing.T, q *Queue) string {
 	}
 	var ids []string
 	for _, e := range entries {
-		ids = append(ids, e.Ticket.ID)
+		ids = append(ids, e.RunID)
 	}
 	return strings.Join(ids, ",")
 }
