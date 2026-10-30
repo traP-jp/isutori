@@ -253,7 +253,7 @@ func (r *run) execute(parent, abort context.Context) error {
 	postCtx, cancelPost := context.WithCancelCause(parent)
 	defer cancelPost(nil)
 	defer context.AfterFunc(abort, func() { cancelPost(errAborted) })()
-	// report's error already holds collectErr, which runErr also does.
+	// report's error already includes collectErr, so runErr is left out to avoid repeating it.
 	return errors.Join(cleanupErr, r.report(postCtx, collectErr))
 }
 
@@ -273,8 +273,7 @@ func (r *run) finish(ctx context.Context) error {
 	return r.report(ctx, r.stage(ctx, "collect", r.hook(r.cfg.Hooks.Collect)))
 }
 
-// report runs analyze unless collect failed, then publish. collectErr is the
-// outcome of collect.
+// report runs analyze unless collect failed, then publish.
 func (r *run) report(ctx context.Context, collectErr error) error {
 	runErr := collectErr
 	if runErr == nil {
