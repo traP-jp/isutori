@@ -32,3 +32,19 @@ func TestDurations(t *testing.T) {
 		t.Fatalf("an integer timeout was accepted: %v", err)
 	}
 }
+
+func TestReleaseAfter(t *testing.T) {
+	c, err := load(t, "")
+	if err != nil || c.Hooks.ReleaseAfter != "" {
+		t.Fatalf("default: %v, %v", c, err)
+	}
+	c, err = load(t, "release_after = \"collect\"\n")
+	if err != nil || c.Hooks.ReleaseAfter != ReleaseAfterCollect {
+		t.Fatalf("collect: %v, %v", c, err)
+	}
+	for _, bad := range []string{"publish", "analyze", "cleanup"} {
+		if _, err := load(t, "release_after = \""+bad+"\"\n"); err == nil || !strings.Contains(err.Error(), "hooks.release_after") {
+			t.Fatalf("release_after = %q was accepted: %v", bad, err)
+		}
+	}
+}

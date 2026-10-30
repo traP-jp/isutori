@@ -35,7 +35,14 @@ type Hooks struct {
 	Analyze      string        `toml:"analyze"`
 	Publish      string        `toml:"publish"`
 	Cleanup      string        `toml:"cleanup"`
+	// ReleaseAfter names the hook after which the run gives up its turn in the
+	// queue. Empty keeps the turn until cleanup has finished.
+	ReleaseAfter string `toml:"release_after"`
 }
+
+// ReleaseAfterCollect makes the run call cleanup right after collect and
+// release its turn, so that analyze and publish run without holding the servers.
+const ReleaseAfterCollect = "collect"
 
 func Load(path string) (*Config, error) {
 	c := &Config{
@@ -75,6 +82,9 @@ func (c *Config) validate() error {
 	if c.Hooks.Timeout <= 0 || c.Hooks.BenchTimeout <= 0 {
 		errs = append(errs, "hooks.timeout and hooks.bench_timeout must be positive")
 	}
+	if c.Hooks.ReleaseAfter != "" && c.Hooks.ReleaseAfter != ReleaseAfterCollect {
+		errs = append(errs, fmt.Sprintf("hooks.release_after must be %q or empty, got %q", ReleaseAfterCollect, c.Hooks.ReleaseAfter))
+	}
 	if c.Hooks.Deploy == "" {
 		errs = append(errs, "hooks.deploy is required")
 	}
@@ -99,6 +109,7 @@ host = "s1"           # SSH の接続先。キューの状態はこのホスト�
 [hooks]
 # timeout = "10m"           # bench 以外のフック 1 つあたりの上限
 # bench_timeout = "20m"     # bench の上限。ポータルの順番待ちも含む
+# release_after = "collect" # collect の後に cleanup を呼んで順番を返し、analyze と publish は順番の外で動かす
 deploy  = "ops/deploy.sh"   # 冒頭で isutori guard を呼ぶこと
 health  = "ops/health.sh"
 prepare = "ops/prepare.sh"

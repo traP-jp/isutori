@@ -12,7 +12,7 @@
 | `receive [--listen ADDR]` | `bench` のフックから呼び、手動で入力された結果を受け取る |
 | `autobench [OPTIONS] PORTAL_URL TARGET` | `bench` のフックから呼び、ユーザースクリプトにベンチを回させる |
 | `inspect [--listen ADDR] [--userscript FILE] PORTAL_URL` | 描画後の DOM と操作履歴を手元に記録する |
-| `status [--json]` | キューの中身と、最後にデプロイされたものを表示する |
+| `status [--json]` | キューの中身と、順番を渡して後処理中の実行と、最後にデプロイされたものを表示する |
 | `queue clear` | キューを空にする。キューが詰まったときの強制解除用 |
 | `init` | `isutori.toml` の雛形を書く |
 | `docs [PAGE]` | README か、`docs/` の文書を表示する |

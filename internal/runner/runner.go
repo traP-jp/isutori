@@ -164,9 +164,10 @@ func (r *run) execute(parent, abort context.Context) error {
 	defer cancel(nil)
 	defer context.AfterFunc(leaseCtx, func() { cancel(context.Cause(leaseCtx)) })()
 	defer context.AfterFunc(abort, func() { loseLease(errAborted) })()
-	defer context.AfterFunc(parent, func() {
+	stopInterruptNote := context.AfterFunc(parent, func() {
 		r.log.Print("interrupted; cleanup still runs unless you interrupt again")
-	})()
+	})
+	defer stopInterruptNote()
 
 	if err := r.waitHead(ctx, name); err != nil {
 		return err
@@ -194,8 +195,18 @@ func (r *run) execute(parent, abort context.Context) error {
 		}
 	}
 
+	// With release_after = "collect", analyze and publish wait until the
+	// servers have been handed over.
+	early := h.ReleaseAfter == config.ReleaseAfterCollect && (h.Analyze != "" || h.Publish != "")
+	collected := false
+	var collectErr error
 	if runErr == nil {
-		runErr = r.finish(ctx)
+		if early {
+			collectErr = r.stage(ctx, "collect", r.hook(h.Collect))
+			runErr, collected = collectErr, true
+		} else {
+			runErr = r.finish(ctx)
+		}
 	}
 
 	// A stage may have failed because the queue entry is gone, e.g. guard in
@@ -212,18 +223,62 @@ func (r *run) execute(parent, abort context.Context) error {
 		r.log.Print("WARNING: skipping cleanup because the servers may already belong to the next run")
 		return errors.Join(runErr, cause)
 	}
-	return errors.Join(runErr, r.stage(leaseCtx, stageCleanup, r.hook(h.Cleanup)))
+	cleanupErr := r.stage(leaseCtx, stageCleanup, r.hook(h.Cleanup))
+	if !early || !collected {
+		return errors.Join(runErr, cleanupErr)
+	}
+
+	// The lease may have been lost while cleanup ran, and a Ctrl-C may have
+	// come in: neither run analyze or publish, as in the default order.
+	if cause := context.Cause(leaseCtx); cause != nil {
+		r.log.Print("WARNING: the lease was lost during cleanup; skipping analyze and publish")
+		return errors.Join(runErr, cleanupErr, cause)
+	}
+	if parent.Err() != nil {
+		r.log.Print("interrupted; skipping analyze and publish")
+		return errors.Join(runErr, cleanupErr, context.Cause(parent))
+	}
+	// Past this point the next run may own the servers, so analyze and publish
+	// must not touch them, and a failure here no longer needs the lease.
+	stopInterruptNote()
+	loseLease(nil)
+	r.releaseTurn(name)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), r.cfg.Queue.LeaseTTL/4)
+		defer cancel()
+		if err := r.q.EndFinishing(ctx, name); err != nil {
+			r.log.Printf("WARNING: %v", err)
+		}
+	}()
+	postCtx, cancelPost := context.WithCancelCause(parent)
+	defer cancelPost(nil)
+	defer context.AfterFunc(abort, func() { cancelPost(errAborted) })()
+	// report's error already holds collectErr, which runErr also does.
+	return errors.Join(cleanupErr, r.report(postCtx, collectErr))
+}
+
+// releaseTurn hands the servers to the next run and leaves a marker that
+// `isutori status` shows until the run ends.
+func (r *run) releaseTurn(name string) {
+	ctx, cancel := context.WithTimeout(context.Background(), r.cfg.Queue.LeaseTTL/4)
+	defer cancel()
+	if err := r.q.Release(ctx, name, r.summary.Entry); err != nil {
+		r.log.Printf("WARNING: failed to release the queue entry %s; it expires after lease_ttl: %v", name, err)
+		return
+	}
+	r.log.Print("released the servers; analyze and publish run without holding the queue")
 }
 
 func (r *run) finish(ctx context.Context) error {
-	var runErr error
-	for _, step := range []struct{ name, command string }{
-		{"collect", r.cfg.Hooks.Collect},
-		{"analyze", r.cfg.Hooks.Analyze},
-	} {
-		if runErr = r.stage(ctx, step.name, r.hook(step.command)); runErr != nil {
-			break
-		}
+	return r.report(ctx, r.stage(ctx, "collect", r.hook(r.cfg.Hooks.Collect)))
+}
+
+// report runs analyze unless collect failed, then publish. collectErr is the
+// outcome of collect.
+func (r *run) report(ctx context.Context, collectErr error) error {
+	runErr := collectErr
+	if runErr == nil {
+		runErr = r.stage(ctx, "analyze", r.hook(r.cfg.Hooks.Analyze))
 	}
 	if ctx.Err() != nil {
 		return errors.Join(runErr, context.Cause(ctx))

@@ -95,7 +95,7 @@ func (q *Queue) Remove(ctx context.Context, name string) error {
 }
 
 func (q *Queue) Clear(ctx context.Context) error {
-	if _, err := q.Shell.Run(ctx, q.prelude()+"rm -f \"$Q\"/*.json\n", nil); err != nil {
+	if _, err := q.Shell.Run(ctx, q.prelude()+"rm -f \"$Q\"/*.json \"$D\"/finishing/*.json\n", nil); err != nil {
 		return fmt.Errorf("clear: %w", err)
 	}
 	return nil
@@ -108,8 +108,52 @@ func (q *Queue) List(ctx context.Context, prune bool) ([]Entry, error) {
 	if prune {
 		ttl = int(q.TTL.Seconds())
 	}
+	return q.list(ctx, `"$Q"`, ttl)
+}
+
+// finishingMaxAge is how long a run may keep running analyze and publish
+// after it released its turn. A marker older than this belongs to a run that
+// died, and is deleted when listed.
+const finishingMaxAge = time.Hour
+
+// Release gives up the run's turn: the servers go to the next entry while the
+// run keeps going. It leaves a marker that ListFinishing returns until
+// EndFinishing, so that `isutori status` can say why the result is not shared yet.
+func (q *Queue) Release(ctx context.Context, name string, e Entry) error {
+	body, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	script := q.prelude() + fmt.Sprintf(`n=%s
+mkdir -p "$D/finishing"
+cat > "$D/finishing/.$n.tmp"
+mv "$D/finishing/.$n.tmp" "$D/finishing/$n"
+rm -f "$Q/$n"
+`, Quote(name))
+	if _, err := q.Shell.Run(ctx, script, bytes.NewReader(body)); err != nil {
+		return fmt.Errorf("release %s: %w", name, err)
+	}
+	return nil
+}
+
+func (q *Queue) EndFinishing(ctx context.Context, name string) error {
+	if _, err := q.Shell.Run(ctx, q.prelude()+"rm -f \"$D/finishing/\""+Quote(name)+"\n", nil); err != nil {
+		return fmt.Errorf("end finishing %s: %w", name, err)
+	}
+	return nil
+}
+
+// ListFinishing returns the runs that released their turn and have not ended,
+// oldest first. LeaseAge is the time since the release.
+func (q *Queue) ListFinishing(ctx context.Context) ([]Entry, error) {
+	return q.list(ctx, `"$D/finishing"`, int(finishingMaxAge.Seconds()))
+}
+
+// list reads the entry files in dir, a shell word. A negative ttl keeps every
+// file; otherwise files older than ttl seconds are deleted.
+func (q *Queue) list(ctx context.Context, dir string, ttl int) ([]Entry, error) {
 	script := q.prelude() + fmt.Sprintf(`now=$(date +%%s)
-for f in "$Q"/*.json; do
+for f in %s/*.json; do
   [ -e "$f" ] || continue
   age=$((now - $(stat -c %%Y "$f")))
   if [ %d -ge 0 ] && [ "$age" -gt %d ]; then rm -f "$f"; continue; fi
@@ -117,7 +161,7 @@ for f in "$Q"/*.json; do
   tr -d '\n' < "$f"
   echo
 done
-`, ttl, ttl)
+`, dir, ttl, ttl)
 	out, err := q.Shell.Run(ctx, script, nil)
 	if err != nil {
 		return nil, fmt.Errorf("list: %w", err)
