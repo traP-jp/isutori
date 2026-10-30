@@ -143,3 +143,71 @@ func queuedIDs(t *testing.T, q *Queue) string {
 	}
 	return strings.Join(ids, ",")
 }
+
+func TestReleaseLeavesAMarkerUntilItEnds(t *testing.T) {
+	ctx := context.Background()
+	q, home := newQueue(t)
+	first, err := q.Enqueue(ctx, Entry{RunID: "a", Requester: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := q.Enqueue(ctx, Entry{RunID: "b", Requester: "y"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Release(ctx, first, Entry{RunID: "a", Requester: "x", Ref: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	if queued := queuedIDs(t, q); queued != "b" {
+		t.Fatalf("queue after release = %q, want only the next run", queued)
+	}
+	finishing, err := q.ListFinishing(ctx)
+	if err != nil || len(finishing) != 1 || finishing[0].RunID != "a" || finishing[0].Ref != "main" {
+		t.Fatalf("finishing = %+v, %v", finishing, err)
+	}
+	if err := q.Renew(ctx, first); !errors.Is(err, ErrEntryLost) {
+		t.Fatalf("renewing a released entry: %v, want ErrEntryLost", err)
+	}
+	if err := q.EndFinishing(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if finishing, _ := q.ListFinishing(ctx); len(finishing) != 0 {
+		t.Fatalf("marker survived EndFinishing: %+v", finishing)
+	}
+	if queued := queuedIDs(t, q); queued != "b" {
+		t.Fatalf("queue = %q, want b", queued)
+	}
+
+	// A marker whose run died is dropped once it is old enough.
+	if err := q.Release(ctx, second, Entry{RunID: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-finishingMaxAge - time.Minute)
+	if err := os.Chtimes(filepath.Join(home, ".isutori/finishing", second), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if finishing, _ := q.ListFinishing(ctx); len(finishing) != 0 {
+		t.Fatalf("a stale marker was listed: %+v", finishing)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".isutori/finishing", second)); !os.IsNotExist(err) {
+		t.Fatal("a stale marker was not deleted")
+	}
+}
+
+func TestClearAlsoClearsMarkers(t *testing.T) {
+	ctx := context.Background()
+	q, _ := newQueue(t)
+	name, err := q.Enqueue(ctx, Entry{RunID: "a", Requester: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Release(ctx, name, Entry{RunID: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Clear(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if finishing, _ := q.ListFinishing(ctx); len(finishing) != 0 {
+		t.Fatalf("markers after clear: %+v", finishing)
+	}
+}

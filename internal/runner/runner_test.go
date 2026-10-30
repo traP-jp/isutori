@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -411,5 +412,184 @@ func TestStageRecordsProgressBeforeRunning(t *testing.T) {
 	called := false
 	if err := r.stage(context.Background(), "publish", func(context.Context) error { called = true; return nil }); err == nil || called {
 		t.Fatalf("ran without saving progress: called=%v, error=%v", called, err)
+	}
+}
+
+func TestExecuteReleasesTheTurnAfterCollect(t *testing.T) {
+	tests := []struct {
+		failure string
+		want    string
+	}{
+		{"", "collect cleanup analyze publish"},
+		{"collect", "collect cleanup publish"},
+		{"analyze", "collect cleanup analyze publish"},
+		{"cleanup", "collect cleanup analyze publish"},
+		{"publish", "collect cleanup analyze publish"},
+		{"bench", "cleanup"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.failure, func(t *testing.T) {
+			dir := t.TempDir()
+			look := `ls queue/queue/*.json 2>/dev/null | wc -l > queued-at-` + "%s" + `; ls queue/finishing/*.json 2>/dev/null | wc -l > finishing-at-` + "%s"
+			hooks := config.Hooks{
+				Timeout: 2 * time.Second, BenchTimeout: 2 * time.Second, ReleaseAfter: config.ReleaseAfterCollect,
+				Deploy:  ":",
+				Bench:   `printf '{"passed":true,"score":1,"message":"ok"}' > "$ISUTORI_BENCH_RESULT"`,
+				Collect: "echo collect >> steps",
+				Analyze: "echo analyze >> steps; " + strings.ReplaceAll(look, "%s", "analyze"),
+				Publish: "echo publish >> steps; " + strings.ReplaceAll(look, "%s", "publish") + `; cp "$ISUTORI_RUN_DIR/run.json" shared.json`,
+				Cleanup: "echo cleanup >> steps",
+			}
+			switch tt.failure {
+			case "bench":
+				hooks.Bench = "exit 11"
+			case "collect":
+				hooks.Collect += "; exit 12"
+			case "analyze":
+				hooks.Analyze += "; exit 13"
+			case "cleanup":
+				hooks.Cleanup += "; exit 15"
+			case "publish":
+				hooks.Publish += "; exit 14"
+			}
+			r := &run{
+				cfg:    &config.Config{Queue: config.Queue{LeaseTTL: 10 * time.Second}, Hooks: hooks},
+				q:      &queue.Queue{Shell: queue.Local{}, Dir: filepath.Join(dir, "queue"), TTL: 10 * time.Second},
+				opsDir: dir, out: io.Discard, log: log.New(io.Discard, "", 0),
+				summary: &Summary{RunDir: dir, Entry: queue.Entry{RunID: "run1", AppCommit: "app1"}},
+			}
+			r.env = environment(r.summary, dir, "unused", "unused")
+			err := r.execute(context.Background(), context.Background())
+			if (err != nil) != (tt.failure != "") {
+				t.Fatalf("execute: %v", err)
+			}
+			wantText := map[string]string{"bench": "bench: exit status 11", "collect": "collect: exit status 12", "analyze": "analyze: exit status 13", "cleanup": "cleanup: exit status 15", "publish": "publish: exit status 14"}[tt.failure]
+			if n := strings.Count(fmt.Sprint(err), wantText); wantText != "" && n != 1 {
+				t.Fatalf("%q appears %d times in the error:\n%v", wantText, n, err)
+			}
+			steps, _ := os.ReadFile(filepath.Join(dir, "steps"))
+			if got := strings.Join(strings.Fields(string(steps)), " "); got != tt.want {
+				t.Fatalf("steps = %q, want %q", got, tt.want)
+			}
+			if entries, _ := r.q.List(context.Background(), false); len(entries) != 0 {
+				t.Fatalf("queue after the run: %+v", entries)
+			}
+			if finishing, _ := r.q.ListFinishing(context.Background()); len(finishing) != 0 {
+				t.Fatalf("marker after the run: %+v", finishing)
+			}
+			if tt.failure == "bench" {
+				return
+			}
+			// Analyze and publish run after the entry left the queue, with the marker in place.
+			for _, step := range []string{"publish", "analyze"} {
+				if step == "analyze" && tt.failure == "collect" {
+					continue
+				}
+				for name, want := range map[string]string{"queued-at-" + step: "0", "finishing-at-" + step: "1"} {
+					b, err := os.ReadFile(filepath.Join(dir, name))
+					if err != nil || strings.TrimSpace(string(b)) != want {
+						t.Fatalf("%s = %q (%v), want %s", name, b, err, want)
+					}
+				}
+			}
+			var shared Summary
+			b, err := os.ReadFile(filepath.Join(dir, "shared.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(b, &shared); err != nil {
+				t.Fatal(err)
+			}
+			if wantErr := tt.failure == "collect" || tt.failure == "analyze"; (shared.Error != "") != wantErr {
+				t.Fatalf("shared error = %q, want an error: %v", shared.Error, wantErr)
+			}
+			var order []string
+			for _, stage := range r.summary.Stages {
+				order = append(order, stage.Name)
+			}
+			if tail := strings.Join(order[len(order)-4:], " "); tail != "collect cleanup analyze publish" && tt.failure != "collect" {
+				t.Fatalf("stage order = %q", tail)
+			}
+		})
+	}
+}
+
+func TestExecuteKeepsTheTurnWhenThereIsNothingToRunAfter(t *testing.T) {
+	dir := t.TempDir()
+	r := &run{
+		cfg: &config.Config{Queue: config.Queue{LeaseTTL: 10 * time.Second}, Hooks: config.Hooks{
+			Timeout: 2 * time.Second, BenchTimeout: 2 * time.Second, ReleaseAfter: config.ReleaseAfterCollect,
+			Deploy:  ":",
+			Bench:   `printf '{"passed":true,"score":1,"message":"ok"}' > "$ISUTORI_BENCH_RESULT"`,
+			Collect: ":",
+			Cleanup: "ls queue/queue/*.json | wc -l > queued-at-cleanup",
+		}},
+		q:      &queue.Queue{Shell: queue.Local{}, Dir: filepath.Join(dir, "queue"), TTL: 10 * time.Second},
+		opsDir: dir, out: io.Discard, log: log.New(io.Discard, "", 0),
+		summary: &Summary{RunDir: dir, Entry: queue.Entry{RunID: "run1"}},
+	}
+	r.env = environment(r.summary, dir, "unused", "unused")
+	if err := r.execute(context.Background(), context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "queued-at-cleanup"))
+	if strings.TrimSpace(string(b)) != "1" {
+		t.Fatalf("queued entries during cleanup = %q, want the run's own entry", b)
+	}
+}
+
+func TestNoLeaseRenewalAfterRelease(t *testing.T) {
+	dir := t.TempDir()
+	var logged strings.Builder
+	r := &run{
+		cfg: &config.Config{Queue: config.Queue{LeaseTTL: time.Second}, Hooks: config.Hooks{
+			Timeout: 5 * time.Second, BenchTimeout: 5 * time.Second, ReleaseAfter: config.ReleaseAfterCollect,
+			Deploy:  ":",
+			Bench:   `printf '{"passed":true,"score":1,"message":"ok"}' > "$ISUTORI_BENCH_RESULT"`,
+			Collect: ":",
+			Analyze: "sleep 1.5",
+		}},
+		q:      &queue.Queue{Shell: queue.Local{}, Dir: filepath.Join(dir, "queue"), TTL: time.Second},
+		opsDir: dir, out: io.Discard, log: log.New(&logged, "", 0),
+		summary: &Summary{RunDir: dir, Entry: queue.Entry{RunID: "run1"}},
+	}
+	r.env = environment(r.summary, dir, "unused", "unused")
+	if err := r.execute(context.Background(), context.Background()); err != nil {
+		t.Fatalf("execute: %v\n%s", err, logged.String())
+	}
+	if strings.Contains(logged.String(), "ERROR") || strings.Contains(logged.String(), "WARNING") {
+		t.Fatalf("the released entry was renewed or removal failed:\n%s", logged.String())
+	}
+}
+
+func TestNoAnalyzeOrPublishWhenTheLeaseIsLostDuringCleanup(t *testing.T) {
+	dir := t.TempDir()
+	r := &run{
+		cfg: &config.Config{Queue: config.Queue{LeaseTTL: time.Second}, Hooks: config.Hooks{
+			Timeout: 5 * time.Second, BenchTimeout: 5 * time.Second, ReleaseAfter: config.ReleaseAfterCollect,
+			Deploy:  ":",
+			Bench:   `printf '{"passed":true,"score":1,"message":"ok"}' > "$ISUTORI_BENCH_RESULT"`,
+			Collect: ":",
+			// The entry vanishes, as if the queue host had expired it.
+			Cleanup: "rm -f queue/queue/*.json; sleep 2",
+			Analyze: "touch analyzed",
+			Publish: "touch published",
+		}},
+		q:      &queue.Queue{Shell: queue.Local{}, Dir: filepath.Join(dir, "queue"), TTL: time.Second},
+		opsDir: dir, out: io.Discard, log: log.New(io.Discard, "", 0),
+		summary: &Summary{RunDir: dir, Entry: queue.Entry{RunID: "run1"}},
+	}
+	r.env = environment(r.summary, dir, "unused", "unused")
+	err := r.execute(context.Background(), context.Background())
+	if !errors.Is(err, queue.ErrEntryLost) {
+		t.Fatalf("execute: %v, want the lost entry", err)
+	}
+	for _, name := range []string{"analyzed", "published"} {
+		if _, statErr := os.Stat(filepath.Join(dir, name)); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("%s ran after the lease was lost", name)
+		}
+	}
+	if finishing, _ := r.q.ListFinishing(context.Background()); len(finishing) != 0 {
+		t.Fatalf("a marker for a run that lost its lease: %+v", finishing)
 	}
 }

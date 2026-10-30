@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -330,40 +331,69 @@ func status(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	finishing, err := q.ListFinishing(ctx)
+	if err != nil {
+		return err
+	}
 	deployed, err := q.ReadDeployed(ctx)
 	if err != nil {
 		return err
 	}
 	if *asJSON {
-		type entry struct {
-			queue.Entry
-			LeaseAgeSeconds float64 `json:"lease_age_seconds"`
-			Expired         bool    `json:"expired"`
-		}
-		out := struct {
-			Queue    []entry         `json:"queue"`
-			Deployed json.RawMessage `json:"deployed"`
-		}{Queue: []entry{}, Deployed: deployed}
-		for _, e := range entries {
-			out.Queue = append(out.Queue, entry{e, e.LeaseAge.Seconds(), e.LeaseAge > cfg.Queue.LeaseTTL})
-		}
-		if out.Deployed == nil {
-			out.Deployed = json.RawMessage("null")
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(out)
+		return writeStatusJSON(os.Stdout, entries, finishing, deployed, cfg.Queue.LeaseTTL)
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	writeStatusTable(os.Stdout, entries, finishing, deployed)
+	return nil
+}
+
+func writeStatusJSON(out io.Writer, entries, finishing []queue.Entry, deployed json.RawMessage, leaseTTL time.Duration) error {
+	type entry struct {
+		queue.Entry
+		LeaseAgeSeconds float64 `json:"lease_age_seconds"`
+		Expired         bool    `json:"expired"`
+	}
+	type released struct {
+		queue.Entry
+		ReleasedSeconds float64 `json:"released_seconds"`
+	}
+	doc := struct {
+		Queue     []entry         `json:"queue"`
+		Finishing []released      `json:"finishing"`
+		Deployed  json.RawMessage `json:"deployed"`
+	}{Queue: []entry{}, Finishing: []released{}, Deployed: deployed}
+	for _, e := range entries {
+		doc.Queue = append(doc.Queue, entry{e, e.LeaseAge.Seconds(), e.LeaseAge > leaseTTL})
+	}
+	for _, e := range finishing {
+		doc.Finishing = append(doc.Finishing, released{e, e.LeaseAge.Seconds()})
+	}
+	if doc.Deployed == nil {
+		doc.Deployed = json.RawMessage("null")
+	}
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	return enc.Encode(doc)
+}
+
+func writeStatusTable(out io.Writer, entries, finishing []queue.Entry, deployed json.RawMessage) {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "#\tRUN ID\tREQUESTER\tREF\tMODE\tWAITING")
 	for i, e := range entries {
 		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", i, e.RunID, e.Requester, e.Ref, e.Mode, time.Since(e.EnqueuedAt).Round(time.Second))
 	}
 	w.Flush()
-	if deployed != nil {
-		fmt.Printf("\ndeployed: %s\n", strings.TrimSpace(string(deployed)))
+	if len(finishing) > 0 {
+		fmt.Fprintln(out, "\nfinishing (the servers are free; analyze and publish are still running):")
+		w = tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "RUN ID\tREQUESTER\tREF\tMODE\tRELEASED")
+		for _, e := range finishing {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s ago\n", e.RunID, e.Requester, e.Ref, e.Mode, e.LeaseAge.Round(time.Second))
+		}
+		w.Flush()
 	}
-	return nil
+	if deployed != nil {
+		fmt.Fprintf(out, "\ndeployed: %s\n", strings.TrimSpace(string(deployed)))
+	}
 }
 
 func clearQueue(ctx context.Context) error {
