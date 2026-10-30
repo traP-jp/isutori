@@ -40,8 +40,8 @@ type Hooks struct {
 	ReleaseAfter string `toml:"release_after"`
 }
 
-// ReleaseAfterCollect makes the run call cleanup right after collect and
-// release its turn, so that analyze and publish run without holding the servers.
+// ReleaseAfterCollect: cleanup runs right after collect, then analyze and
+// publish run without the turn.
 const ReleaseAfterCollect = "collect"
 
 func Load(path string) (*Config, error) {

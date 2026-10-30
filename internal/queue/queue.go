@@ -18,8 +18,7 @@ import (
 
 var ErrEntryLost = errors.New("queue entry no longer exists (expired or cleared)")
 
-// Entry is one queued run, identified by its run ID. Name and LeaseAge are
-// set by List and are not stored in the entry's file.
+// Entry's Name, LeaseAge and Waited are set by List and are not stored in the entry's file.
 type Entry struct {
 	Name     string        `json:"-"`
 	LeaseAge time.Duration `json:"-"`
@@ -34,10 +33,9 @@ type Entry struct {
 	EnqueuedAt time.Time     `json:"enqueued_at"`
 }
 
-// Queue keeps one file per entry under Dir/queue on the queue host.
-// File names start with a counter kept on the host, so lexical order is
-// arrival order even if a clock steps back. An entry's mtime is its lease;
-// clients touch it periodically.
+// Queue holds one file per entry under Dir/queue. Names start with a host
+// counter, so lexical order is arrival order even if a clock steps back. An
+// entry's mtime is its lease.
 type Queue struct {
 	Shell Shell
 	Dir   string
@@ -119,9 +117,8 @@ func (q *Queue) List(ctx context.Context, prune bool) ([]Entry, error) {
 // died, and is deleted when listed.
 const finishingMaxAge = time.Hour
 
-// Release gives up the run's turn: the servers go to the next entry while the
-// run keeps going. It leaves a marker that ListFinishing returns until
-// EndFinishing, so that `isutori status` can say why the result is not shared yet.
+// Release gives up the run's turn while the run keeps going. The marker it
+// leaves is listed by ListFinishing until EndFinishing.
 func (q *Queue) Release(ctx context.Context, name string, e Entry) error {
 	body, err := json.Marshal(e)
 	if err != nil {

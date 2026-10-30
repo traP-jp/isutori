@@ -37,7 +37,6 @@ type Options struct {
 	Log       io.Writer
 }
 
-// Stage statuses recorded in run.json.
 const (
 	StageRunning   = "running"
 	StageSucceeded = "succeeded"
@@ -195,8 +194,7 @@ func (r *run) execute(parent, abort context.Context) error {
 		}
 	}
 
-	// With release_after = "collect", analyze and publish wait until the
-	// servers have been handed over.
+	// release_after = "collect": analyze and publish wait until the servers are handed over.
 	early := h.ReleaseAfter == config.ReleaseAfterCollect && (h.Analyze != "" || h.Publish != "")
 	collected := false
 	var collectErr error
@@ -228,8 +226,7 @@ func (r *run) execute(parent, abort context.Context) error {
 		return errors.Join(runErr, cleanupErr)
 	}
 
-	// The lease may have been lost while cleanup ran, and a Ctrl-C may have
-	// come in: neither run analyze or publish, as in the default order.
+	// Lease lost or Ctrl-C during cleanup: skip analyze and publish, as in the default order.
 	if cause := context.Cause(leaseCtx); cause != nil {
 		r.log.Print("WARNING: the lease was lost during cleanup; skipping analyze and publish")
 		return errors.Join(runErr, cleanupErr, cause)
@@ -238,8 +235,7 @@ func (r *run) execute(parent, abort context.Context) error {
 		r.log.Print("interrupted; skipping analyze and publish")
 		return errors.Join(runErr, cleanupErr, context.Cause(parent))
 	}
-	// Past this point the next run may own the servers, so analyze and publish
-	// must not touch them, and a failure here no longer needs the lease.
+	// From here the next run may own the servers; analyze and publish must not touch them.
 	stopInterruptNote()
 	loseLease(nil)
 	r.releaseTurn(name)
@@ -564,7 +560,6 @@ func repoRootOf(runDir string) (string, error) {
 	return filepath.Dir(filepath.Dir(runs)), nil
 }
 
-// loadRun wires a run to the configuration and hooks saved in its directory.
 func loadRun(root string, summary *Summary, out io.Writer) (*run, error) {
 	opsDir := filepath.Join(summary.RunDir, "ops")
 	cfgPath := filepath.Join(opsDir, config.FileName)
