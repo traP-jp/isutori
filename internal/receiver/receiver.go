@@ -85,10 +85,9 @@ func RequireLoopback(listen string) error {
 	return nil
 }
 
-// loopbackHostOnly answers only requests addressed to the loopback name and
-// port the receiver listens on. A page that makes its own name resolve to
-// 127.0.0.1 (DNS rebinding) is then same-origin with the receiver in the
-// browser's eyes, but still carries its own name in the Host header.
+// loopbackHostOnly refuses Host values other than loopback on the listening
+// port: with DNS rebinding a hostile page is same-origin with the receiver,
+// yet its Host header keeps the page's own name.
 func loopbackHostOnly(listen string, next http.Handler) http.Handler {
 	_, port, _ := net.SplitHostPort(listen)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

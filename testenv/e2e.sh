@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# Runs three `isutori bench` concurrently against a dockerized s1 and checks
-# that their deploy..cleanup windows never overlap, then checks that Ctrl-C
-# still runs cleanup, holding the queue until it ends, that a second Ctrl-C
-# kills cleanup and frees the queue at once, and that a failed benchmark
-# exits with 2.
+# End-to-end check of the queue against a dockerized s1; each section says what it checks.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
