@@ -12,6 +12,10 @@ testenv/e2e.sh   # Docker の sshd を s1 に見立て、3 人同時の bench �
 
 skill を変えたら `plugin.json` の `version` を上げます。Codex はこのバージョンごとに plugin をキャッシュします。
 
+## ユーザースクリプトの雛形
+
+`internal/userscript/isutori.user.js` の `@version` は、雛形の値の `1` のまま変えません。雛形を変えても上げません。Tampermonkey が更新の判定に使うのは、競技ごとに書き出した競技リポジトリ側のファイルなので、上げるのはそちらです。
+
 ## 偽ポータルの画面
 
 偽ポータルの画面は `mockportal/` でビルドし、成果物を `internal/mockportal/dist/` にコミットしています。isutori を使うだけなら Node は不要です。

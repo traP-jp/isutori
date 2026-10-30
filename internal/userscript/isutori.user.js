@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         isutori autobench
 // @namespace    https://github.com/traP-jp/isutori
-// @version      12
+// @version      1
 // @description  Records portal DOM changes and runs benchmarks after checking the script identity.
 // @match        http://127.0.0.1:7879/*
 // @grant        GM_xmlhttpRequest
@@ -34,7 +34,7 @@
    */
 
   /**
-   * Preparation may select a server, but must not enqueue or change run state.
+   * Preparation may select a server, but must not enqueue or change isutori's saved run state.
    * submit must recheck the target and button before registering exactly one job.
    * Keep this object in memory; only Job is saved across page reloads.
    * @typedef {{ target: string, submit: () => Promise<Job> }} Prepared
@@ -45,9 +45,10 @@
   const adapter = {
     /**
      * Prepares target selection without registering a job. Loading placeholders
-     * are not real options; the target may determine the final measurement.
+     * are not real options. Selecting a target can decide which server the final
+     * measurement uses; select only what TARGET names.
      * Custom controls may select on mousedown, not click; inspect their handlers.
-     * Omit view: window in synthetic events: Tampermonkey may wrap that Window.
+     * Omit `view: window` in synthetic events: Tampermonkey may wrap that Window.
      * role="option" may also mark an empty message. Empty alone does not prove
      * loading, failure, or absence of targets; check the portal's state.
      * @param {string} target the TARGET given to `isutori autobench`
@@ -130,7 +131,8 @@
     },
 
     /**
-     * Wait for this job's terminal state and final-result fields from the same update.
+     * Return the result once this job is in a terminal state and its final-result
+     * fields come from the same update; null before then.
      * A visible or steady score is not final; failed benchmarks are valid results.
      * Throw on navigation away or unsupported states; never substitute another job.
      * @param {Job | null} job null reads the job shown on the current page.
@@ -745,6 +747,7 @@
    */
   function createAutobench(tabs) {
     const pollMs = 2000;
+    // Used when the CLI passed no deadline (an older isutori, or no ISUTORI_CONFIG).
     const resultTimeoutMs = 20 * 60 * 1000;
     /** @type {Verification | undefined} */
     let verified;
@@ -892,6 +895,7 @@
         if (Date.now() > (current.deadline ?? current.startedAt + resultTimeoutMs)) {
           return report(current, { error: "timed out waiting for the result" });
         }
+        // Lets the CLI warn when the tab goes silent; a failed beat must not stop result collection.
         void post(current, "/api/heartbeat", {}).catch(() => {});
         await sleep(pollMs);
       }
