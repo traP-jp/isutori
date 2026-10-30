@@ -50,7 +50,7 @@ var manualTmpl = template.Must(template.New("manual").Parse(manualHTML))
 // arrives, then closes ln.
 func Wait(ctx context.Context, ln net.Listener, opts Options) (Result, error) {
 	rec := newReceiver(opts)
-	srv := &http.Server{Handler: rec.handler(), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Handler: loopbackHostOnly(ln.Addr().String(), rec.handler()), ReadHeaderTimeout: 10 * time.Second}
 	go srv.Serve(ln)
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -70,6 +70,35 @@ func Wait(ctx context.Context, ln net.Listener, opts Options) (Result, error) {
 			return Result{}, context.Cause(ctx)
 		}
 	}
+}
+
+// RequireLoopback rejects a listen address that other machines could reach,
+// as the portal pages and the userscript only ever use the local machine.
+func RequireLoopback(listen string) error {
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		return err
+	}
+	if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return fmt.Errorf("--listen %s: use a loopback address such as 127.0.0.1", listen)
+	}
+	return nil
+}
+
+// loopbackHostOnly answers only requests addressed to the loopback name and
+// port the receiver listens on. A page that makes its own name resolve to
+// 127.0.0.1 (DNS rebinding) is then same-origin with the receiver in the
+// browser's eyes, but still carries its own name in the Host header.
+func loopbackHostOnly(listen string, next http.Handler) http.Handler {
+	_, port, _ := net.SplitHostPort(listen)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, reqPort, err := net.SplitHostPort(r.Host)
+		if ip := net.ParseIP(host); err != nil || reqPort != port || (host != "localhost" && (ip == nil || !ip.IsLoopback())) {
+			http.Error(w, "forbidden host", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 type receiver struct {

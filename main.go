@@ -267,6 +267,9 @@ func awaitResult(ctx context.Context, listen, scriptPath string, listening func(
 	if runID == "" || out == "" {
 		return errors.New("not running as hooks.bench of `isutori bench`")
 	}
+	if err := receiver.RequireLoopback(listen); err != nil {
+		return err
+	}
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
 		return fmt.Errorf("%w (another isutori bench may be running on this machine)", err)
