@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -55,6 +56,8 @@ const usage = `usage: isutori <command> [arguments]
       print the userscript for the portal
   docs [PAGE]
       print the README, or docs/PAGE.md
+  version
+      print the version (also --version)
   mock-portal [--listen ADDR] [--pending D] [--running D] [--outcome pass|fail|error] [--score N]
       serve a fake portal for trying the userscript
 
@@ -97,6 +100,9 @@ func dispatch(ctx, abort context.Context, args []string) (int, error) {
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return 0, nil
+	case "version", "--version":
+		fmt.Println(buildVersion())
+		return 0, nil
 	case "bench":
 		return bench(ctx, abort, rest)
 	case "publish":
@@ -136,6 +142,39 @@ func dispatch(ctx, abort context.Context, args []string) (int, error) {
 		fmt.Fprint(os.Stderr, usage)
 		return 1, fmt.Errorf("unknown command %q", cmd)
 	}
+}
+
+// buildVersion falls back to the commit for builds without a recorded version.
+func buildVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+	return formatVersion(info)
+}
+
+func formatVersion(info *debug.BuildInfo) string {
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		return v
+	}
+	rev, dirty := "", ""
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			rev = setting.Value
+			if len(rev) > 7 {
+				rev = rev[:7]
+			}
+		case "vcs.modified":
+			if setting.Value == "true" {
+				dirty = "-dirty"
+			}
+		}
+	}
+	if rev == "" {
+		return "devel"
+	}
+	return "devel-" + rev + dirty
 }
 
 func exitCode(err error) (int, error) {
