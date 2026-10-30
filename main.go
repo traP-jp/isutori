@@ -267,6 +267,9 @@ func awaitResult(ctx context.Context, listen, scriptPath string, listening func(
 	if runID == "" || out == "" {
 		return errors.New("not running as hooks.bench of `isutori bench`")
 	}
+	if err := receiver.RequireLoopback(listen); err != nil {
+		return err
+	}
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
 		return fmt.Errorf("%w (another isutori bench may be running on this machine)", err)
@@ -350,6 +353,7 @@ func writeStatusJSON(out io.Writer, entries, finishing []queue.Entry, deployed j
 	type entry struct {
 		queue.Entry
 		LeaseAgeSeconds float64 `json:"lease_age_seconds"`
+		WaitedSeconds   float64 `json:"waited_seconds"`
 		Expired         bool    `json:"expired"`
 	}
 	type released struct {
@@ -362,7 +366,7 @@ func writeStatusJSON(out io.Writer, entries, finishing []queue.Entry, deployed j
 		Deployed  json.RawMessage `json:"deployed"`
 	}{Queue: []entry{}, Finishing: []released{}, Deployed: deployed}
 	for _, e := range entries {
-		doc.Queue = append(doc.Queue, entry{e, e.LeaseAge.Seconds(), e.LeaseAge > leaseTTL})
+		doc.Queue = append(doc.Queue, entry{e, e.LeaseAge.Seconds(), e.Waited.Seconds(), e.LeaseAge > leaseTTL})
 	}
 	for _, e := range finishing {
 		doc.Finishing = append(doc.Finishing, released{e, e.LeaseAge.Seconds()})
@@ -379,7 +383,7 @@ func writeStatusTable(out io.Writer, entries, finishing []queue.Entry, deployed 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "#\tRUN ID\tREQUESTER\tREF\tMODE\tWAITING")
 	for i, e := range entries {
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", i, e.RunID, e.Requester, e.Ref, e.Mode, time.Since(e.EnqueuedAt).Round(time.Second))
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", i, e.RunID, e.Requester, e.Ref, e.Mode, e.Waited)
 	}
 	w.Flush()
 	if len(finishing) > 0 {

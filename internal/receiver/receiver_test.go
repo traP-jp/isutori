@@ -2,10 +2,12 @@ package receiver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/traP-jp/isutori/internal/userscript"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -247,5 +249,52 @@ func TestManualInputAfterMismatch(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != 204 || saved.Userscript.Status != "not_checked" || saved.Userscript.Actual != "" {
 		t.Fatalf("manual result: %d %+v", w.Code, saved)
+	}
+}
+
+func TestWaitAnswersOnlyLoopbackHosts(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Wait(ctx, ln, Options{RunID: "run1", Log: io.Discard, Save: func(Result) error { return nil }})
+	}()
+	defer func() { cancel(); <-done }()
+
+	for host, want := range map[string]int{
+		"127.0.0.1:" + port:       http.StatusOK,
+		"localhost:" + port:       http.StatusOK,
+		"[::1]:" + port:           http.StatusOK,
+		"rebound.example:" + port: http.StatusForbidden,
+		"127.0.0.1:1":             http.StatusForbidden,
+		"127.0.0.1":               http.StatusForbidden,
+		"192.168.0.5:" + port:     http.StatusForbidden,
+	} {
+		req, _ := http.NewRequest("GET", "http://"+ln.Addr().String()+"/api/run", nil)
+		req.Host = host
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != want {
+			t.Errorf("Host %q: got %d, want %d", host, res.StatusCode, want)
+		}
+	}
+}
+
+func TestRequireLoopback(t *testing.T) {
+	for listen, ok := range map[string]bool{
+		"127.0.0.1:7878": true, "localhost:7878": true, "[::1]:7878": true, "127.0.0.2:7878": true,
+		"0.0.0.0:7878": false, ":7878": false, "192.168.0.5:7878": false, "example.com:7878": false, "7878": false,
+	} {
+		if err := RequireLoopback(listen); (err == nil) != ok {
+			t.Errorf("RequireLoopback(%q) = %v, want ok=%v", listen, err, ok)
+		}
 	}
 }

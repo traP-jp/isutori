@@ -211,3 +211,35 @@ func TestClearAlsoClearsMarkers(t *testing.T) {
 		t.Fatalf("markers after clear: %+v", finishing)
 	}
 }
+
+func TestWaitedIsCountedOnTheQueueHost(t *testing.T) {
+	ctx := context.Background()
+	q, home := newQueue(t)
+	if _, err := q.Enqueue(ctx, Entry{RunID: "a", Requester: "x", EnqueuedAt: time.Now().Add(-time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	entries, err := q.List(ctx, false)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("%+v, %v", entries, err)
+	}
+	// The requester's clock said an hour ago; the queue host's clock says about a second.
+	if w := entries[0].Waited; w < time.Second || w > 5*time.Second {
+		t.Fatalf("waited %v, want about 1s", w)
+	}
+
+	// An entry whose name does not start with a counter must not break the listing.
+	odd := filepath.Join(home, ".isutori/queue/odd-name.json")
+	if err := os.WriteFile(odd, []byte(`{"run_id":"b"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entries, err = q.List(ctx, false)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("%+v, %v", entries, err)
+	}
+	for _, e := range entries {
+		if e.RunID == "b" && e.Waited != 0 {
+			t.Fatalf("waited %v for an entry without a counter", e.Waited)
+		}
+	}
+}

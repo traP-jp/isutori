@@ -21,8 +21,11 @@ var ErrEntryLost = errors.New("queue entry no longer exists (expired or cleared)
 // Entry is one queued run, identified by its run ID. Name and LeaseAge are
 // set by List and are not stored in the entry's file.
 type Entry struct {
-	Name       string        `json:"-"`
-	LeaseAge   time.Duration `json:"-"`
+	Name     string        `json:"-"`
+	LeaseAge time.Duration `json:"-"`
+	// Waited is the time since the entry joined, counted on the queue host's
+	// clock. EnqueuedAt comes from the requester's clock, which may differ.
+	Waited     time.Duration `json:"-"`
 	RunID      string        `json:"run_id"`
 	Requester  string        `json:"requester"`
 	Ref        string        `json:"ref"`
@@ -157,7 +160,11 @@ for f in %s/*.json; do
   [ -e "$f" ] || continue
   age=$((now - $(stat -c %%Y "$f")))
   if [ %d -ge 0 ] && [ "$age" -gt %d ]; then rm -f "$f"; continue; fi
-  printf '%%s\t%%s\t' "${f##*/}" "$age"
+  n=${f##*/}
+  seq=${n%%%%-*}
+  case "$seq" in ''|*[!0-9]*) waited=0 ;; *) waited=$((now - seq / 1000000000)) ;; esac
+  if [ "$waited" -lt 0 ]; then waited=0; fi
+  printf '%%s\t%%s\t%%s\t' "$n" "$age" "$waited"
   tr -d '\n' < "$f"
   echo
 done
@@ -168,13 +175,17 @@ done
 	}
 	var entries []Entry
 	for line := range strings.Lines(string(out)) {
-		name, rest, _ := strings.Cut(strings.TrimSuffix(line, "\n"), "\t")
-		ageStr, body, _ := strings.Cut(rest, "\t")
-		age, err := strconv.Atoi(ageStr)
-		if err != nil {
+		fields := strings.SplitN(strings.TrimSuffix(line, "\n"), "\t", 4)
+		if len(fields) != 4 {
 			return nil, fmt.Errorf("list: malformed line %q", line)
 		}
-		e := Entry{Name: name, LeaseAge: time.Duration(age) * time.Second}
+		name, body := fields[0], fields[3]
+		age, ageErr := strconv.Atoi(fields[1])
+		waited, waitedErr := strconv.Atoi(fields[2])
+		if ageErr != nil || waitedErr != nil {
+			return nil, fmt.Errorf("list: malformed line %q", line)
+		}
+		e := Entry{Name: name, LeaseAge: time.Duration(age) * time.Second, Waited: time.Duration(waited) * time.Second}
 		if err := json.Unmarshal([]byte(body), &e); err != nil {
 			return nil, fmt.Errorf("list: entry %s: %w", name, err)
 		}
