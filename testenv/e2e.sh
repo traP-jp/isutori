@@ -171,5 +171,36 @@ git checkout -q main
 isutori bench --ref origin/topic --requester hal > "$work/hal.json" 2> "$work/hal.log" || { echo "hal's bench failed"; fail=1; }
 grep -q '"score": 456' "$work/hal.json" || { echo "hooks were not taken from --ref"; fail=1; }
 
+# With release_after, the next run deploys while this one is still analyzing.
+git checkout -qb rel
+cat > ops/slow.sh <<EOF
+#!/bin/sh
+set -e
+ssh -F $work/ssh_config s1 "echo \$ISUTORI_RUN_ID analyze >> markers"
+sleep 8
+ssh -F $work/ssh_config s1 "echo \$ISUTORI_RUN_ID analyzed >> markers"
+EOF
+chmod +x ops/slow.sh
+sed -i 's|^cleanup = .*|&\nanalyze = "ops/slow.sh"\nrelease_after = "collect"|' isutori.toml
+git add . && git commit -qm rel && git push -q origin rel 2>/dev/null
+git checkout -q main
+ssh -F "$work/ssh_config" s1 'rm -f markers'
+isutori bench --ref origin/rel --requester iris > "$work/iris.json" 2> "$work/iris.log" &
+iris=$!
+wait_log $iris "$work/iris.log" '== analyze'
+isutori status | grep -q 'finishing.*analyze and publish' || { echo "status does not list the run that is analyzing"; fail=1; }
+isutori bench --requester jack > "$work/jack.json" 2> "$work/jack.log" &
+jack=$!
+wait $iris || { echo "iris's bench exited with $?"; fail=1; }
+wait $jack || { echo "jack's bench exited with $?"; fail=1; }
+ssh -F "$work/ssh_config" s1 cat markers > "$work/markers"
+awk '
+  $2 == "deploy" && ++deploys == 2 { jack = NR }
+  $2 == "analyze"  { started = NR }
+  $2 == "analyzed" { ended = NR }
+  END { exit !(started && jack && ended && started < jack && jack < ended) }
+' "$work/markers" || { echo "jack did not deploy while iris was analyzing"; cat "$work/markers"; fail=1; }
+[ "$(isutori status --json | grep -c '"finishing": \[\]')" = 1 ] || { echo "finishing marker left after the run"; fail=1; }
+
 if [ "$fail" = 0 ]; then echo "e2e: OK"; else echo "e2e: FAILED (logs in $work)"; fi
 exit $fail
