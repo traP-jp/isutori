@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -80,5 +82,36 @@ func TestStatusShowsRunsThatAreFinishing(t *testing.T) {
 	out.Reset()
 	if err := writeStatusJSON(&out, nil, nil, nil, time.Minute); err != nil || !strings.Contains(out.String(), `"finishing": []`) {
 		t.Fatalf("an empty list must be [], not null: %v\n%s", err, out.String())
+	}
+}
+
+func TestFormatVersion(t *testing.T) {
+	build := func(version string, settings ...debug.BuildSetting) *debug.BuildInfo {
+		return &debug.BuildInfo{Main: debug.Module{Version: version}, Settings: settings}
+	}
+	for name, tc := range map[string]struct {
+		info *debug.BuildInfo
+		want string
+	}{
+		"installed release":  {build("v0.7.0"), "v0.7.0"},
+		"clean local build":  {build("(devel)", debug.BuildSetting{Key: "vcs.revision", Value: "0123456789abcdef"}, debug.BuildSetting{Key: "vcs.modified", Value: "false"}), "devel-0123456"},
+		"dirty local build":  {build("(devel)", debug.BuildSetting{Key: "vcs.revision", Value: "0123456789abcdef"}, debug.BuildSetting{Key: "vcs.modified", Value: "true"}), "devel-0123456-dirty"},
+		"no version control": {build("(devel)"), "devel"},
+		"empty version":      {build(""), "devel"},
+	} {
+		if got := formatVersion(tc.info); got != tc.want {
+			t.Errorf("%s: got %q, want %q", name, got, tc.want)
+		}
+	}
+}
+
+func TestVersionCommandNames(t *testing.T) {
+	for _, name := range []string{"version", "--version"} {
+		if code, err := dispatch(context.Background(), context.Background(), []string{name}); code != 0 || err != nil {
+			t.Errorf("%s: got code %d, error %v", name, code, err)
+		}
+	}
+	if code, _ := dispatch(context.Background(), context.Background(), []string{"-version"}); code == 0 {
+		t.Error("an unknown name was accepted")
 	}
 }

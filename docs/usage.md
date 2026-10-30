@@ -17,6 +17,7 @@
 | `init` | `isutori.toml` の雛形を書く |
 | `docs [PAGE]` | README か、`docs/` の文書を表示する |
 | `help` | コマンドの一覧と使い方を表示する |
+| `version` | バージョンを表示する。`--version` でも同じ |
 | `userscript [MATCH_PATTERN...]` | ユーザースクリプトを書き出す |
 | `mock-portal` | 偽ポータルを起動する |
 
