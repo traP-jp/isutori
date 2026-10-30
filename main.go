@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -237,8 +238,20 @@ func autobench(ctx context.Context, args []string) error {
 		return errors.New("usage: isutori autobench [--listen ADDR] [--open-command CMD] [--userscript FILE] PORTAL_URL TARGET")
 	}
 	portal, target := fs.Arg(0), fs.Arg(1)
+	var deadline time.Time
+	if path := os.Getenv("ISUTORI_CONFIG"); path != "" {
+		cfg, err := config.Load(path)
+		if err != nil {
+			return err
+		}
+		deadline = time.Now().Add(cfg.Hooks.BenchTimeout)
+	}
 	return awaitResult(ctx, *listen, *scriptPath, func(runID string) {
-		u := portal + "#" + url.Values{"autobench_v2": {runID}, "receiver": {"http://" + *listen}, "target": {target}}.Encode()
+		values := url.Values{"autobench_v2": {runID}, "receiver": {"http://" + *listen}, "target": {target}}
+		if !deadline.IsZero() {
+			values.Set("deadline", strconv.FormatInt(deadline.UnixMilli(), 10))
+		}
+		u := portal + "#" + values.Encode()
 		fmt.Fprintf(os.Stderr, "isutori: opening %s\n", u)
 		if err := openBrowser(*open, u); err != nil {
 			fmt.Fprintf(os.Stderr, "isutori: WARNING: %v; open the URL above yourself\n", err)

@@ -65,6 +65,10 @@ const receiver = createServer((req, res) => {
         .end(JSON.stringify({ expected, actual, status: actual === expected ? "matched" : "mismatched" }));
       return;
     }
+    if (req.url === "/api/heartbeat") {
+      res.writeHead(204).end();
+      return;
+    }
     const result: Result = JSON.parse(body);
     posted.get(result.run_id)?.(result);
     res.writeHead(204).end();
