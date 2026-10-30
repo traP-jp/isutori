@@ -1,6 +1,7 @@
 package receiver
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"github.com/traP-jp/isutori/internal/userscript"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestHandler(t *testing.T) {
@@ -168,6 +170,70 @@ func TestUserscriptGate(t *testing.T) {
 	}
 	if saved.Userscript.Status != "matched" || saved.Userscript.Expected != id {
 		t.Fatalf("trusted client verification: %+v", saved)
+	}
+}
+
+func TestHeartbeat(t *testing.T) {
+	rec := newReceiver(Options{RunID: "run1", Log: io.Discard, Save: func(Result) error { return nil }})
+	h := rec.handler()
+	post := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	if w := post(`{"run_id":"other"}`); w.Code != http.StatusConflict {
+		t.Fatalf("wrong run_id: got %d", w.Code)
+	}
+	if w := post(`{"run_id":"run1"}`); w.Code != http.StatusNoContent {
+		t.Fatalf("valid heartbeat: got %d", w.Code)
+	}
+	if len(rec.results) != 0 {
+		t.Fatal("heartbeat delivered a result")
+	}
+}
+
+func TestHeartbeatWarning(t *testing.T) {
+	var log bytes.Buffer
+	manual := newReceiver(Options{RunID: "run1", Log: &log, Save: func(Result) error { return nil }})
+	manual.checkHeartbeat(time.Now().Add(time.Hour), "127.0.0.1:7878")
+	if log.Len() != 0 {
+		t.Fatalf("warned without a heartbeat: %q", log.String())
+	}
+
+	rec := newReceiver(Options{RunID: "run1", ScriptPath: "script.user.js", Log: &log, Save: func(Result) error { return nil }})
+	h := rec.handler()
+	beat := func() {
+		r := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(`{"run_id":"run1"}`))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("heartbeat: got %d", w.Code)
+		}
+	}
+	beat()
+	rec.checkHeartbeat(time.Now(), "127.0.0.1:7878")
+	if log.Len() != 0 {
+		t.Fatalf("warned while the tab was responding: %q", log.String())
+	}
+	stale := time.Now().Add(heartbeatTimeout + time.Minute)
+	rec.checkHeartbeat(stale, "127.0.0.1:7878")
+	rec.checkHeartbeat(stale.Add(time.Minute), "127.0.0.1:7878")
+	if n := strings.Count(log.String(), "WARNING"); n != 1 {
+		t.Fatalf("warnings = %d, want 1: %q", n, log.String())
+	}
+	if !strings.Contains(log.String(), "http://127.0.0.1:7878/") {
+		t.Fatalf("warning does not name the manual form: %q", log.String())
+	}
+	beat()
+	if !strings.Contains(log.String(), "responding again") {
+		t.Fatalf("no recovery line after the heartbeat returned: %q", log.String())
+	}
+	rec.checkHeartbeat(time.Now().Add(heartbeatTimeout+time.Minute), "127.0.0.1:7878")
+	if n := strings.Count(log.String(), "WARNING"); n != 2 {
+		t.Fatalf("warnings after a second silence = %d, want 2: %q", n, log.String())
 	}
 }
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         isutori autobench
 // @namespace    https://github.com/traP-jp/isutori
-// @version      11
+// @version      12
 // @description  Records portal DOM changes and runs benchmarks after checking the script identity.
 // @match        http://127.0.0.1:7879/*
 // @grant        GM_xmlhttpRequest
@@ -275,6 +275,7 @@
    * @property {string} receiver
    * @property {string} target
    * @property {number} startedAt epoch milliseconds
+   * @property {number} [deadline] epoch milliseconds
    * @property {string} [note]
    * @property {boolean} [autoOpened]
    * @property {{order: number, received?: boolean, keep?: boolean, job?: Job}} [tab]
@@ -758,13 +759,22 @@
       history.replaceState(null, "", location.pathname + location.search);
       const current = runs.load();
       if (current?.runId === runId) return { state: current, fromHash: true };
+      const deadline = Number(params.get("deadline"));
       return {
-        state: { runId, receiver, target, phase: "enqueue", startedAt: Date.now(), autoOpened: true },
+        state: {
+          runId,
+          receiver,
+          target,
+          phase: "enqueue",
+          startedAt: Date.now(),
+          ...(Number.isFinite(deadline) && deadline > 0 ? { deadline } : {}),
+          autoOpened: true,
+        },
         fromHash: true,
       };
     }
 
-    /** @param {State} state @param {"/api/userscript" | "/api/result"} path @param {object} body */
+    /** @param {State} state @param {"/api/userscript" | "/api/result" | "/api/heartbeat"} path @param {object} body */
     function post(state, path, body) {
       return postJSON(
         `${state.receiver}${path}`,
@@ -872,9 +882,6 @@
       }
       if (current.phase !== "waiting") return;
       for (;;) {
-        if (Date.now() - current.startedAt > resultTimeoutMs) {
-          return report(current, { error: "timed out waiting for the result" });
-        }
         let result;
         try {
           result = adapter.readResult(current.job);
@@ -882,6 +889,10 @@
           return report(current, { error: `readResult: ${e.message}` });
         }
         if (result) return report(current, result);
+        if (Date.now() > (current.deadline ?? current.startedAt + resultTimeoutMs)) {
+          return report(current, { error: "timed out waiting for the result" });
+        }
+        void post(current, "/api/heartbeat", {}).catch(() => {});
         await sleep(pollMs);
       }
     }

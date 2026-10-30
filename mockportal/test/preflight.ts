@@ -18,6 +18,7 @@ function page(initialState?: object, automatic = false) {
   if (initialState) storage.set(storageKey, JSON.stringify(initialState));
   const alerts: string[] = [];
   const posted: string[] = [];
+  const beats: string[] = [];
   const phases: string[] = [];
   const location = {
     pathname: "/contestant",
@@ -41,6 +42,7 @@ function page(initialState?: object, automatic = false) {
     ariaDisabled: false,
     buttonPresent: true,
     ignoreSelection: false,
+    failHeartbeats: false,
     clicks: 0,
     prompts: 0,
     ticks: 0,
@@ -145,6 +147,7 @@ function page(initialState?: object, automatic = false) {
       url: string;
       data: string;
       onload: (response: { status: number; responseText: string }) => void;
+      onerror?: () => void;
     }) {
       if (request.url.endsWith("/api/userscript")) {
         controls.handshakes++;
@@ -158,6 +161,12 @@ function page(initialState?: object, automatic = false) {
         });
         return;
       }
+      if (request.url.endsWith("/api/heartbeat")) {
+        beats.push(request.data);
+        if (controls.failHeartbeats) request.onerror?.();
+        else request.onload({ status: 204, responseText: "" });
+        return;
+      }
       posted.push(request.data);
       request.onload({ status: 204, responseText: "" });
     },
@@ -166,6 +175,7 @@ function page(initialState?: object, automatic = false) {
     controls,
     alerts,
     posted,
+    beats,
     phases,
     storage,
     location,
@@ -510,4 +520,120 @@ test("a job that never publishes a final result times out without publishing its
   const result = JSON.parse(p.posted[0]);
   assert.match(result.error, /timed out/);
   assert.equal(result.score, undefined);
+});
+
+test("a result already on the page is reported even after the old timeout", async () => {
+  const p = page({
+    runId: "test",
+    receiver: "http://localhost:7878",
+    target: "2",
+    phase: "waiting",
+    job: { jobId: "1" },
+    startedAt: -21 * 60 * 1000,
+  });
+  p.location.pathname = "/contestant/benchmark_jobs/1";
+  p.start();
+  await setImmediate();
+  const result = JSON.parse(p.posted[0]);
+  assert.equal(result.score, 42);
+  assert.equal(result.error, undefined);
+});
+
+test("a deadline from the CLI extends the wait past the old timeout", async () => {
+  const p = page({
+    runId: "test",
+    receiver: "http://localhost:7878",
+    target: "2",
+    phase: "waiting",
+    job: { jobId: "1" },
+    startedAt: -21 * 60 * 1000,
+    deadline: 60 * 1000,
+  });
+  p.location.pathname = "/contestant/benchmark_jobs/1";
+  p.controls.running = true;
+  p.controls.onTimer = () => {
+    p.controls.running = false;
+  };
+  p.start();
+  await setImmediate();
+  const result = JSON.parse(p.posted[0]);
+  assert.equal(result.score, 42);
+});
+
+test("a past deadline with no result reports a timeout", async () => {
+  const p = page({
+    runId: "test",
+    receiver: "http://localhost:7878",
+    target: "2",
+    phase: "waiting",
+    job: { jobId: "1" },
+    startedAt: 0,
+    deadline: 1000,
+  });
+  p.location.pathname = "/contestant/benchmark_jobs/1";
+  p.controls.running = true;
+  p.start();
+  await setImmediate();
+  const result = JSON.parse(p.posted[0]);
+  assert.match(result.error, /timed out/);
+  assert.equal(result.score, undefined);
+});
+
+test("heartbeats are sent while waiting for the result", async () => {
+  const p = page({
+    runId: "test",
+    receiver: "http://localhost:7878",
+    target: "2",
+    phase: "waiting",
+    job: { jobId: "1" },
+    startedAt: 0,
+  });
+  p.location.pathname = "/contestant/benchmark_jobs/1";
+  p.controls.running = true;
+  p.controls.onTimer = () => {
+    if (p.controls.ticks === 2) p.controls.running = false;
+  };
+  p.start();
+  await setImmediate();
+  assert.equal(JSON.parse(p.posted[0]).score, 42);
+  assert.equal(p.beats.length, 2);
+  assert.ok(p.beats.every((beat) => JSON.parse(beat).run_id === "test"));
+});
+
+test("a failed heartbeat does not stop result collection", async () => {
+  const p = page({
+    runId: "test",
+    receiver: "http://localhost:7878",
+    target: "2",
+    phase: "waiting",
+    job: { jobId: "1" },
+    startedAt: 0,
+  });
+  p.location.pathname = "/contestant/benchmark_jobs/1";
+  p.controls.running = true;
+  p.controls.failHeartbeats = true;
+  p.controls.onTimer = () => {
+    p.controls.running = false;
+  };
+  p.start();
+  await setImmediate();
+  assert.equal(JSON.parse(p.posted[0]).score, 42);
+  assert.ok(p.beats.length >= 1);
+});
+
+test("the launch URL deadline is kept in the run state", async () => {
+  const p = page(undefined, true);
+  p.location.hash = "#autobench_v2=test&receiver=http://localhost:7878&target=2&deadline=60000";
+  p.start();
+  await setImmediate();
+  assert.equal(JSON.parse(p.storage.get(storageKey) ?? "null").deadline, 60000);
+});
+
+test("an invalid deadline in the launch URL is ignored", async () => {
+  const p = page(undefined, true);
+  p.location.hash = "#autobench_v2=test&receiver=http://localhost:7878&target=2&deadline=abc";
+  p.start();
+  await setImmediate();
+  assert.equal(JSON.parse(p.storage.get(storageKey) ?? "null").deadline, undefined);
+  assert.equal(JSON.parse(p.posted[0]).score, 42);
 });

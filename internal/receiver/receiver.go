@@ -18,6 +18,8 @@ import (
 
 const maxRequestBytes = 1 << 20
 
+const heartbeatTimeout = 3 * time.Minute
+
 type Result struct {
 	RunID   string `json:"run_id"`
 	Passed  bool   `json:"passed"`
@@ -56,11 +58,17 @@ func Wait(ctx context.Context, ln net.Listener, opts Options) (Result, error) {
 		srv.Shutdown(shutdownCtx)
 	}()
 
-	select {
-	case r := <-rec.results:
-		return r, nil
-	case <-ctx.Done():
-		return Result{}, context.Cause(ctx)
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case r := <-rec.results:
+			return r, nil
+		case <-ticker.C:
+			rec.checkHeartbeat(time.Now(), ln.Addr().String())
+		case <-ctx.Done():
+			return Result{}, context.Cause(ctx)
+		}
 	}
 }
 
@@ -69,9 +77,12 @@ type receiver struct {
 	reference userscript.Reference
 	results   chan Result
 
-	mu       sync.Mutex
-	accepted bool
-	approved userscript.Verification
+	mu         sync.Mutex
+	accepted   bool
+	approved   userscript.Verification
+	lastBeat   time.Time
+	beatSeen   bool
+	beatWarned bool
 }
 
 func newReceiver(opts Options) *receiver {
@@ -91,6 +102,7 @@ func (rec *receiver) handler() http.Handler {
 		json.NewEncoder(w).Encode(map[string]string{"run_id": rec.RunID})
 	})
 	mux.HandleFunc("POST /api/userscript", rec.verify)
+	mux.HandleFunc("POST /api/heartbeat", rec.heartbeat)
 	mux.HandleFunc("POST /api/result", rec.deliver(false))
 	mux.HandleFunc("POST /api/manual-result", rec.deliver(true))
 	return mux
@@ -121,6 +133,41 @@ func (rec *receiver) verify(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(rec.Log, "isutori: userscript %s: expected=%s actual=%s file=%s %s\n", v.Status, v.Expected, v.Actual, rec.ScriptPath, v.Error)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+func (rec *receiver) heartbeat(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		RunID string `json:"run_id"`
+	}
+	if !strictjson.DecodeRequest(w, r, maxRequestBytes, &request) {
+		return
+	}
+	if request.RunID != rec.RunID {
+		http.Error(w, "run_id mismatch", http.StatusConflict)
+		return
+	}
+	rec.mu.Lock()
+	rec.lastBeat = time.Now()
+	rec.beatSeen = true
+	revived := rec.beatWarned
+	rec.beatWarned = false
+	rec.mu.Unlock()
+	if revived {
+		fmt.Fprintln(rec.Log, "isutori: the portal tab is responding again")
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (rec *receiver) checkHeartbeat(now time.Time, addr string) {
+	rec.mu.Lock()
+	if !rec.beatSeen || rec.beatWarned || now.Sub(rec.lastBeat) <= heartbeatTimeout {
+		rec.mu.Unlock()
+		return
+	}
+	rec.beatWarned = true
+	silent := now.Sub(rec.lastBeat).Round(time.Second)
+	rec.mu.Unlock()
+	fmt.Fprintf(rec.Log, "isutori: WARNING: no heartbeat from the portal tab for %v; the tab may be suspended. Bring the portal tab to the front, or enter the result by hand at http://%s/\n", silent, addr)
 }
 
 func (rec *receiver) deliver(manual bool) http.HandlerFunc {
